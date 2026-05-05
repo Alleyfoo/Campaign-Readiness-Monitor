@@ -65,21 +65,44 @@ def validate_items(df: pd.DataFrame) -> pd.DataFrame:
 
 def main():
     st.set_page_config(page_title="Product Setup Verification Dashboard", layout="wide")
+    # Inject a lightweight design system similar to pricing-tool-demo
+    st.html(
+        """
+        <style>
+        :root {
+          --ink: #0A1F24;
+          --paper: #F4F1EA;
+          --ink-2: #122E35;
+          --ink-3: #1B3F47;
+          --teal: #14B8A6;
+          --teal-soft: #CCFBF1;
+        }
+        .card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1px; background: var(--ink); border: 1px solid var(--ink); margin: 16px 0 32px; }
+        .card-item { background: var(--paper); padding: 20px; }
+        .card-sub { font-family: sans-serif; font-size: 11px; text-transform: uppercase; letter-spacing: .12em; color: #1f1f1f; }
+        .card-num { font-family: serif; font-size: 28px; color: var(--ink); margin-top: 6px; }
+        </style>
+        """,
+        height=0,
+    )
     st.title("Product Setup Verification Dashboard")
 
     df = build_mock_items()
     df = validate_items(df)
-
     total = len(df)
     ok = (df['validation_status'] == 'OK').sum()
     warn = (df['validation_status'] == 'Warning').sum()
     crit = (df['validation_status'] == 'Critical').sum()
-
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Total", total)
-    c2.metric("OK", int(ok))
-    c3.metric("Warnings", int(warn))
-    c4.metric("Critical", int(crit))
+    # KPI cards via custom HTML design
+    html_kpi = f'''
+    <div class="card-grid">
+      <div class="card-item"><div class="card-sub">Total</div><div class="card-num">{total}</div></div>
+      <div class="card-item"><div class="card-sub">OK</div><div class="card-num">{int(ok)}</div></div>
+      <div class="card-item"><div class="card-sub">Warnings</div><div class="card-num">{int(warn)}</div></div>
+      <div class="card-item"><div class="card-sub">Critical</div><div class="card-num">{int(crit)}</div></div>
+    </div>
+    '''
+    st.markdown(html_kpi, unsafe_allow_html=True)
 
     # Filter by status
     selected = st.multiselect("Filter by status", ['OK','Warning','Critical'], default=['OK','Warning','Critical'])
