@@ -68,20 +68,44 @@ def main():
     # Inject a lightweight design system similar to pricing-tool-demo
     st.html(
         """
+        <link rel="preconnect" href="https://fonts.googleapis.com">
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
         <style>
         :root {
-          --ink: #0A1F24;
-          --paper: #F4F1EA;
-          --ink-2: #122E35;
-          --ink-3: #1B3F47;
-          --teal: #14B8A6;
-          --teal-soft: #CCFBF1;
+          --ink:        #0A1F24;
+          --ink-2:      #122E35;
+          --ink-3:      #1B3F47;
+          --paper:      #F4F1EA;
+          --paper-2:    #EAE5DA;
+          --paper-3:    #DDD6C5;
+          --teal:       #14B8A6;
+          --teal-bright:#2DD4BF;
+          --teal-dim:   #0F766E;
+          --teal-soft:  #CCFBF1;
+          --signal:     #F97316;
+          --signal-soft:#FED7AA;
+          --gold:       #C9A24A;
+          --serif:      "Instrument Serif", "Times New Roman", serif;
+          --sans:       "Geist", "Inter", system-ui, sans-serif;
+          --mono:       "Geist Mono", "JetBrains Mono", ui-monospace, monospace;
         }
+
+        /* Brand header and band */
+        .brand-wrap { display: flex; align-items: center; padding: 6px 12px; gap: 8px; }
+        .brand-mark { font-family: var(--serif); font-size: 22px; }
+        .brand-mark em { color: var(--teal-bright); font-style: italic; }
+        .band-container { height: 80px; background: linear-gradient(to right, var(--paper-3) 0%, var(--paper-3) 8%, var(--teal-soft) 22%, var(--teal) 50%, var(--teal-soft) 78%, var(--paper-3) 92%, var(--paper-3) 100%); border-top: 1px solid var(--ink); border-bottom: 1px solid var(--ink); margin: 8px 0 24px; }
+
+        /* Card styles (basic) */
         .card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1px; background: var(--ink); border: 1px solid var(--ink); margin: 16px 0 32px; }
         .card-item { background: var(--paper); padding: 20px; }
         .card-sub { font-family: sans-serif; font-size: 11px; text-transform: uppercase; letter-spacing: .12em; color: #1f1f1f; }
         .card-num { font-family: serif; font-size: 28px; color: var(--ink); margin-top: 6px; }
         </style>
+        <!-- Start of design header -->
+        <div class="band-container"></div>
+        <div class="brand-wrap"><div class="brand-mark">Product Setup Verification Dashboard</div><span class="dot"></span></div>
         """,
         height=0,
     )
