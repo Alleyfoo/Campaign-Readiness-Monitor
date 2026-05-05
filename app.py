@@ -252,6 +252,52 @@ def render_weekly_specials():
             html.append("</tbody></table>")
             st.markdown("".join(html), unsafe_allow_html=True)
 
+    # Corrections panel (mock) – simple, session-persisted corrections for the current session
+    # This offers a minimal path to demonstrate a corrections workflow without persisting to disk.
+    try:
+        weekly  # ensure variable exists
+        if not weekly.empty:
+            corr_item = st.selectbox("Corrections item", weekly['item_id'].tolist())
+            # fetch current row for the selected item
+            current = weekly[weekly['item_id'] == corr_item].iloc[0]
+            new_local_exp_price = st.number_input("Local expected price", value=current['local_expected_price'], key=f"lc_exp_price_{corr_item}")
+            new_local_exp_start = st.date_input("Local expected start", value=current['local_expected_start'], key=f"lc_exp_start_{corr_item}")
+            new_local_exp_end = st.date_input("Local expected end", value=current['local_expected_end'], key=f"lc_exp_end_{corr_item}")
+            new_bin_exp_price = st.number_input("Bin expected price", value=current['bin_expected_price'], key=f"bc_exp_price_{corr_item}")
+            new_bin_exp_start = st.date_input("Bin expected start", value=current['bin_expected_start'], key=f"bc_exp_start_{corr_item}")
+            new_bin_exp_end = st.date_input("Bin expected end", value=current['bin_expected_end'], key=f"bc_exp_end_{corr_item}")
+            new_online_exp_price = st.number_input("Online expected price", value=current['online_expected_price'], key=f"oc_exp_price_{corr_item}")
+            new_online_exp_start = st.date_input("Online expected start", value=current['online_expected_start'], key=f"oc_exp_start_{corr_item}")
+            new_online_exp_end = st.date_input("Online expected end", value=current['online_expected_end'], key=f"oc_exp_end_{corr_item}")
+            if st.button("Apply Corrections", key=f"apply_corr_{corr_item}"):
+                weekly.loc[weekly['item_id']==corr_item, 'local_expected_price'] = new_local_exp_price
+                weekly.loc[weekly['item_id']==corr_item, 'local_expected_start'] = new_local_exp_start
+                weekly.loc[weekly['item_id']==corr_item, 'local_expected_end'] = new_local_exp_end
+                weekly.loc[weekly['item_id']==corr_item, 'bin_expected_price'] = new_bin_exp_price
+                weekly.loc[weekly['item_id']==corr_item, 'bin_expected_start'] = new_bin_exp_start
+                weekly.loc[weekly['item_id']==corr_item, 'bin_expected_end'] = new_bin_exp_end
+                weekly.loc[weekly['item_id']==corr_item, 'online_expected_price'] = new_online_exp_price
+                weekly.loc[weekly['item_id']==corr_item, 'online_expected_start'] = new_online_exp_start
+                weekly.loc[weekly['item_id']==corr_item, 'online_expected_end'] = new_online_exp_end
+                set_weekly_data(weekly)
+                st.success("Corrections applied (mock, session)")
+                payload = {
+                    'item_id': corr_item,
+                    'name': weekly.loc[weekly['item_id']==corr_item, 'name'].iloc[0],
+                    'corrections': {
+                        'local': {'expected_price': new_local_exp_price, 'expected_start': str(new_local_exp_start), 'expected_end': str(new_local_exp_end)},
+                        'bin': {'expected_price': new_bin_exp_price, 'expected_start': str(new_bin_exp_start), 'expected_end': str(new_bin_exp_end)},
+                        'online': {'expected_price': new_online_exp_price, 'expected_start': str(new_online_exp_start), 'expected_end': str(new_online_exp_end)},
+                    },
+                    'timestamp': date.today().isoformat()
+                }
+                st.json(payload, expanded=False)
+        else:
+            st.write("No weekly specials to correct.")
+    except Exception:
+        # If any of the session data isn't initialized yet, skip corrections gracefully
+        pass
+
 def validate_items(df: pd.DataFrame) -> pd.DataFrame:
     now = date.today()
     df = df.copy()
