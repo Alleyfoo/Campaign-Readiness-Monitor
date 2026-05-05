@@ -63,6 +63,34 @@ def validate_items(df: pd.DataFrame) -> pd.DataFrame:
     df.loc[df['validation_status'] == 'Warning', 'issue'] = 'Mismatch in pricing or dates'
     return df
 
+def _verify_system(price, price_exp, start, start_exp, end, end_exp, today):
+    price_ok = abs(price - price_exp) <= price_exp * 0.05
+    start_ok = start == start_exp
+    end_ok = end == end_exp
+    active_today = (pd.to_datetime(today) >= pd.to_datetime(start)) and (pd.to_datetime(today) <= pd.to_datetime(end))
+    if not active_today:
+        status = "Critical"
+    elif price_ok and start_ok and end_ok:
+        status = "OK"
+    else:
+        status = "Warning"
+    return {"price_ok": price_ok, "start_ok": start_ok, "end_ok": end_ok, "active_today": active_today, "status": status}
+
+def _system_statuses_for_row(row, today: date):
+    systems = ["local", "bin", "online"]
+    statuses = {}
+    for s in systems:
+        price = row.get(f"{s}_price")
+        price_exp = row.get(f"{s}_expected_price")
+        start = row.get(f"{s}_start")
+        start_exp = row.get(f"{s}_expected_start")
+        end = row.get(f"{s}_end")
+        end_exp = row.get(f"{s}_expected_end")
+        verify = _verify_system(price, price_exp, start, start_exp, end, end_exp, today)
+        statuses[f"{s}_status"] = verify["status"]
+    # overall can be derived outside
+    return statuses
+
 def build_weekly_specials() -> pd.DataFrame:
     # Weekly specials with three systems: local, bin, online
     today = date.today()
@@ -183,37 +211,42 @@ def main():
     '''
     st.markdown(html_kpi, unsafe_allow_html=True)
 
-    # Weekly Specials Section: show items and verification with hover tooltips
+    # Weekly Specials Section: collapsible per-item view with per-system verification
     weekly = build_weekly_specials()
     weekly = validate_items(weekly)
-    # Build a simple tooltip-enabled HTML table
-    tooltip_css = """
-    <style>
-    table.weekly { border-collapse: collapse; width: 100%; }
-    table.weekly th, table.weekly td { border: 1px solid #ccc; padding: 6px 8px; text-align: left; }
-    td[data-tooltip] { position: relative; }
-    td[data-tooltip]:hover::after {
-      content: attr(data-tooltip);
-      white-space: pre;
-      position: absolute; left: 0; bottom: 100%; transform: translateY(-6px);
-      background: #333; color: #fff; padding: 6px; border-radius: 4px; width: 260px; z-index: 9999;
-      pointer-events: none;
-    }
-    </style>
-    """
-    rows = []
-    for _, r in weekly.iterrows():
-        tip = (
-            f"Price: {r['system_price']:.2f} (exp {r['expected_price']:.2f})\\n"
-            f"Dates: {r['expected_start']} - {r['expected_end']} / {r['system_start']} - {r['system_end']}\\n"
-            f"Active: {r['active_today']} | Margin OK: {r['margin_ok']} | Price Match: {r['price_matches']}"
-        )
-        rows.append((r['name'], r['category'], r['system_price'], r['validation_status'], tip))
-    weekly_html = tooltip_css + "<table class='weekly'><thead><tr><th>Item</th><th>Category</th><th>System Price</th><th>Status</th></tr></thead><tbody>"
-    for name, cat, price, status, tip in rows:
-        weekly_html += f"<tr><td data-tooltip='{tip}'>{name}</td><td>{cat}</td><td>{price:.2f}</td><td>{status}</td></tr>"
-    weekly_html += "</tbody></table>"
-    st.markdown(weekly_html, unsafe_allow_html=True)
+    today = date.today()
+    # Compute per-system statuses for each row
+    for idx, row in weekly.iterrows():
+        local = _verify_system(row["local_price"], row["local_expected_price"], row["local_start"], row["local_expected_start"], row["local_end"], row["local_expected_end"], today)
+        bin_ = _verify_system(row["bin_price"], row["bin_expected_price"], row["bin_start"], row["bin_expected_start"], row["bin_end"], row["bin_expected_end"], today)
+        online = _verify_system(row["online_price"], row["online_expected_price"], row["online_start"], row["online_expected_start"], row["online_end"], row["online_expected_end"], today)
+        weekly.at[idx, "local_status"] = local["status"]
+        weekly.at[idx, "bin_status"] = bin_["status"]
+        weekly.at[idx, "online_status"] = online["status"]
+        # overall
+        statuses = [local["status"], bin_["status"], online["status"]]
+        if any(s == "Critical" for s in statuses):
+            weekly.at[idx, "overall_status"] = "Critical"
+        elif any(s == "Warning" for s in statuses):
+            weekly.at[idx, "overall_status"] = "Warning"
+        else:
+            weekly.at[idx, "overall_status"] = "OK"
+
+    # Render collapsible per weekly item with per-system table
+    for idx, row in weekly.iterrows():
+        label = f"{row['name']} ({row['item_id']}) - Overall: {row.get('overall_status','OK')}"
+        with st.expander(label, expanded=False):
+            inner = []
+            inner.append("<table class='weekly'>")
+            inner.append("<thead><tr><th>System</th><th>Price</th><th>Window</th><th>Expected Price</th><th>Expected Window</th><th>Status</th></tr></thead>")
+            inner.append("<tbody>")
+            def add_row(system, price, win, exp_price, exp_win, status):
+                inner.append(f"<tr><td>{system}</td><td>{price:.2f}</td><td>{win}</td><td>{exp_price:.2f}</td><td>{exp_win}</td><td>{status}</td></tr>")
+            add_row("Local", row["local_price"], f"{row['local_start']}-{row['local_end']}", row["local_expected_price"], f"{row['local_expected_start']}-{row['local_expected_end']}", row.get("local_status","OK"))
+            add_row("Bin", row["bin_price"], f"{row['bin_start']}-{row['bin_end']}", row["bin_expected_price"], f"{row['bin_expected_start']}-{row['bin_expected_end']}", row.get("bin_status","OK"))
+            add_row("Online", row["online_price"], f"{row['online_start']}-{row['online_end']}", row["online_expected_price"], f"{row['online_expected_start']}-{row['online_expected_end']}", row.get("online_status","OK"))
+            inner.append("</tbody></table>")
+            st.markdown("".join(inner), unsafe_allow_html=True)
 
     # Filter by status
     selected = st.multiselect("Filter by status", ['OK','Warning','Critical'], default=['OK','Warning','Critical'])
