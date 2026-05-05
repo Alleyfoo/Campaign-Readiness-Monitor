@@ -1,15 +1,14 @@
-# Product Pricing Dashboard (Streamlit)
+# Product Setup Verification Dashboard
 
-This repository serves as a base for a product pricing dashboard built with Streamlit.
+This Streamlit mockup demonstrates how product master data, pricing, and validity dates can be checked before or after system setup.
 
-How to run locally:
-- Create and activate a virtual environment
-  - Python 3.11+ preferred
-  - On Windows: `python -m venv .venv` and then `.\.venv\Scripts\Activate.ps1` (PowerShell) or `.\.venv\Scripts\activate` (cmd).
-- Install dependencies
-  - `pip install -r requirements.txt`
-- Run the app
-  - `streamlit run app.py`
+The dashboard uses synthetic data to show:
+- whether products exist in the system
+- whether prices match expected values
+- whether start and end dates are correctly configured
+- whether products have active prices today
+- whether pricing records have missing, expired, or conflicting setup
+- which records need correction before publishing or importing
 
 Notes:
 - The base app is designed to be a practical prototype with synthetic data demonstrating pricing logic, historical modeling, and a rule-based cost calculator.
