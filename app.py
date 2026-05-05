@@ -240,11 +240,48 @@ def main():
             inner.append("<table class='weekly'>")
             inner.append("<thead><tr><th>System</th><th>Price</th><th>Window</th><th>Expected Price</th><th>Expected Window</th><th>Status</th></tr></thead>")
             inner.append("<tbody>")
-            def add_row(system, price, win, exp_price, exp_win, status):
-                inner.append(f"<tr><td>{system}</td><td>{price:.2f}</td><td>{win}</td><td>{exp_price:.2f}</td><td>{exp_win}</td><td>{status}</td></tr>")
-            add_row("Local", row["local_price"], f"{row['local_start']}-{row['local_end']}", row["local_expected_price"], f"{row['local_expected_start']}-{row['local_expected_end']}", row.get("local_status","OK"))
-            add_row("Bin", row["bin_price"], f"{row['bin_start']}-{row['bin_end']}", row["bin_expected_price"], f"{row['bin_expected_start']}-{row['bin_expected_end']}", row.get("bin_status","OK"))
-            add_row("Online", row["online_price"], f"{row['online_start']}-{row['online_end']}", row["online_expected_price"], f"{row['online_expected_start']}-{row['online_expected_end']}", row.get("online_status","OK"))
+            # Local
+            local_tip = (
+                f"Price: {row['local_price']:.2f} (exp {row['local_expected_price']:.2f})\\n"
+                f"Dates: {row['local_start']} - {row['local_end']} / {row['local_expected_start']} - {row['local_expected_end']}\\n"
+                f"Active: {row.get('local_status','OK')}"
+            )
+            inner.append(
+                f"<tr><td title=\"{local_tip}\">Local</td>"
+                f"<td>{row['local_price']:.2f}</td>"
+                f"<td>{row['local_start']}-{row['local_end']}</td>"
+                f"<td>{row['local_expected_price']:.2f}</td>"
+                f"<td>{row['local_expected_start']}-{row['local_expected_end']}</td>"
+                f"<td>{row.get('local_status','OK')}</td></tr>"
+            )
+            # Bin
+            bin_tip = (
+                f"Price: {row['bin_price']:.2f} (exp {row['bin_expected_price']:.2f})\\n"
+                f"Dates: {row['bin_start']} - {row['bin_end']} / {row['bin_expected_start']} - {row['bin_expected_end']}\\n"
+                f"Active: {row.get('bin_status','OK')}"
+            )
+            inner.append(
+                f"<tr><td title=\"{bin_tip}\">Bin</td>"
+                f"<td>{row['bin_price']:.2f}</td>"
+                f"<td>{row['bin_start']}-{row['bin_end']}</td>"
+                f"<td>{row['bin_expected_price']:.2f}</td>"
+                f"<td>{row['bin_expected_start']}-{row['bin_expected_end']}</td>"
+                f"<td>{row.get('bin_status','OK')}</td></tr>"
+            )
+            # Online
+            online_tip = (
+                f"Price: {row['online_price']:.2f} (exp {row['online_expected_price']:.2f})\\n"
+                f"Dates: {row['online_start']} - {row['online_end']} / {row['online_expected_start']} - {row['online_expected_end']}\\n"
+                f"Active: {row.get('online_status','OK')}"
+            )
+            inner.append(
+                f"<tr><td title=\"{online_tip}\">Online</td>"
+                f"<td>{row['online_price']:.2f}</td>"
+                f"<td>{row['online_start']}-{row['online_end']}</td>"
+                f"<td>{row['online_expected_price']:.2f}</td>"
+                f"<td>{row['online_expected_start']}-{row['online_expected_end']}</td>"
+                f"<td>{row.get('online_status','OK')}</td></tr>"
+            )
             inner.append("</tbody></table>")
             st.markdown("".join(inner), unsafe_allow_html=True)
 
