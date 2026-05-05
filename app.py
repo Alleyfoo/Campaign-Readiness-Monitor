@@ -180,7 +180,15 @@ def render_weekly_specials():
             html.append("<thead><tr><th>System</th><th>Price</th><th>Window</th><th>Expected Price</th><th>Expected Window</th><th>Status</th></tr></thead>")
             html.append("<tbody>")
             def add_row(system, price, win, exp_price, exp_win, status):
-                html.append(f"<tr><td>{system}</td><td>{price:.2f}</td><td>{win}</td><td>{exp_price:.2f}</td><td>{exp_win}</td><td>{status}</td></tr>")
+                badge = f"badge-{status.lower()}" if status in ["OK","Warning","Critical"] else "badge-ok"
+                html.append(
+                    f"<tr><td>{system}</td>"
+                    f"<td>{price:.2f}</td>"
+                    f"<td>{win}</td>"
+                    f"<td>{exp_price:.2f}</td>"
+                    f"<td>{exp_win}</td>"
+                    f"<td><span class='badge {badge}'>{status}</span></td></tr>"
+                )
             add_row("Local", row['local_price'], f"{row['local_start']}-{row['local_end']}", row['local_expected_price'], f"{row['local_expected_start']}-{row['local_expected_end']}", row.get('local_status','OK'))
             add_row("Bin", row['bin_price'], f"{row['bin_start']}-{row['bin_end']}", row['bin_expected_price'], f"{row['bin_expected_start']}-{row['bin_expected_end']}", row.get('bin_status','OK'))
             add_row("Online", row['online_price'], f"{row['online_start']}-{row['online_end']}", row['online_expected_price'], f"{row['online_expected_start']}-{row['online_expected_end']}", row.get('online_status','OK'))
