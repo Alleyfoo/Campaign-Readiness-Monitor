@@ -29,8 +29,10 @@ def _verify_system(price, price_exp, start, start_exp, end, end_exp, today):
     return {"price_ok": price_ok, "start_ok": start_ok, "end_ok": end_ok, "active_today": active_today, "status": status}
 
 
-def generate_mock_weekly() -> pd.DataFrame:
-    today = date.today()
+def generate_mock_weekly(today: date | None = None) -> pd.DataFrame:
+    # Deterministic today anchor if provided; otherwise use today
+    if today is None:
+        today = date.today()
     data = [
         {
             "item_id": "WS-01",
@@ -114,8 +116,26 @@ def generate_mock_weekly() -> pd.DataFrame:
     return df
 
 
-def build_weekly_specials() -> pd.DataFrame:
-    return generate_mock_weekly()
+def build_weekly_specials(force_today: date | None = None) -> pd.DataFrame:
+    # Return mock weekly data, with optional deterministic anchor date for reproducibility
+    return generate_mock_weekly(force_today)
+
+def get_weekly_data() -> pd.DataFrame:
+    if "weekly_data" in st.session_state:
+        return st.session_state.weekly_data
+    weekly = build_weekly_specials()
+    st.session_state.weekly_data = weekly
+    return weekly
+
+def set_weekly_data(df: pd.DataFrame):
+    st.session_state["weekly_data"] = df.copy()
+
+def ensure_weekly_data(force_today: date | None = None) -> pd.DataFrame:
+    weekly = get_weekly_data()
+    if force_today is not None:
+        weekly = generate_mock_weekly(force_today)
+        set_weekly_data(weekly)
+    return weekly
 
 
 def render_overview():
@@ -148,7 +168,16 @@ def render_overview():
         st.write("No weekly specials configured.")
 
 def render_weekly_specials():
-    weekly = build_weekly_specials()
+    # Use session-backed weekly data if available; otherwise generate initial mock
+    weekly = None
+    try:
+        weekly = get_weekly_data()
+    except Exception:
+        weekly = build_weekly_specials()
+        set_weekly_data(weekly)
+    if weekly is None or weekly.empty:
+        weekly = build_weekly_specials()
+        set_weekly_data(weekly)
     weekly = weekly.copy()
     weekly = weekly.fillna(0)
     today = date.today()
