@@ -106,9 +106,16 @@ def main():
                 'Start (Expected/System)','End (Expected/System)','Margin','Active Today','Status','Issue'
             ],
             'Value': [
-                detail['name'], detail['category'], detail['expected_price'], detail['system_price'],
-                f"{detail['expected_start']} / {detail['system_start']}",
-                f"{detail['expected_end']} / {detail['system_end']}", detail['margin'], detail['active_today'], detail['validation_status'], detail['issue']
+                str(detail['name']),
+                str(detail['category']),
+                str(detail['expected_price']),
+                str(detail['system_price']),
+                str(detail['expected_start']) + ' / ' + str(detail['system_start']),
+                str(detail['expected_end']) + ' / ' + str(detail['system_end']),
+                str(detail['margin']),
+                str(detail['active_today']),
+                str(detail['validation_status']),
+                str(detail['issue']),
             ]
         })
         st.table(detail_table)
