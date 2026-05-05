@@ -239,6 +239,59 @@ def main():
         else:
             weekly.at[idx, "overall_status"] = "OK"
 
+    # Health banner and export controls for weekly specials
+    try:
+        ok_count = int((weekly.get('overall_status') == 'OK').sum())
+        warn_count = int((weekly.get('overall_status') == 'Warning').sum())
+        crit_count = int((weekly.get('overall_status') == 'Critical').sum())
+        total_weekly = int(len(weekly))
+        if crit_count > 0:
+            color = '#dc2626'
+        elif warn_count > 0:
+            color = '#f59e0b'
+        else:
+            color = '#16a34a'
+        banner = f"<div style='padding:8px 12px; background:{color}; color:white; border-radius:6px; display:inline-block; font-weight:600;'>Weekly Health: OK {ok_count} / {total_weekly} | Warnings {warn_count} | Critical {crit_count}</div>"
+        st.markdown(banner, unsafe_allow_html=True)
+    except Exception:
+        pass
+
+    # Export weekly specials to CSV
+    export_rows = []
+    for _, rr in weekly.iterrows():
+        export_rows.append({
+            'item_id': rr.get('item_id'),
+            'name': rr.get('name'),
+            'category': rr.get('category'),
+            'local_price': rr.get('local_price'),
+            'local_start': str(rr.get('local_start')) if rr.get('local_start') else '',
+            'local_end': str(rr.get('local_end')) if rr.get('local_end') else '',
+            'local_expected_price': rr.get('local_expected_price'),
+            'local_expected_start': str(rr.get('local_expected_start')) if rr.get('local_expected_start') else '',
+            'local_expected_end': str(rr.get('local_expected_end')) if rr.get('local_expected_end') else '',
+            'bin_price': rr.get('bin_price'),
+            'bin_start': str(rr.get('bin_start')) if rr.get('bin_start') else '',
+            'bin_end': str(rr.get('bin_end')) if rr.get('bin_end') else '',
+            'bin_expected_price': rr.get('bin_expected_price'),
+            'bin_expected_start': str(rr.get('bin_expected_start')) if rr.get('bin_expected_start') else '',
+            'bin_expected_end': str(rr.get('bin_expected_end')) if rr.get('bin_expected_end') else '',
+            'online_price': rr.get('online_price'),
+            'online_start': str(rr.get('online_start')) if rr.get('online_start') else '',
+            'online_end': str(rr.get('online_end')) if rr.get('online_end') else '',
+            'online_expected_price': rr.get('online_expected_price'),
+            'online_expected_start': str(rr.get('online_expected_start')) if rr.get('online_expected_start') else '',
+            'online_expected_end': str(rr.get('online_expected_end')) if rr.get('online_expected_end') else '',
+            'margin': rr.get('margin'),
+            'local_status': rr.get('local_status'),
+            'bin_status': rr.get('bin_status'),
+            'online_status': rr.get('online_status'),
+            'overall_status': rr.get('overall_status'),
+        })
+    if export_rows:
+        weekly_export_df = pd.DataFrame(export_rows)
+        csv_text = weekly_export_df.to_csv(index=False)
+        st.download_button(label='Download Weekly CSV', data=csv_text, file_name='weekly_specials.csv', mime='text/csv')
+
     # Render collapsible per weekly item with per-system table
     for idx, row in weekly.iterrows():
         label = f"{row['name']} ({row['item_id']}) - Overall: {row.get('overall_status','OK')}"
