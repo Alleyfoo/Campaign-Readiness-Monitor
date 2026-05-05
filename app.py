@@ -29,28 +29,26 @@ def _verify_system(price, price_exp, start, start_exp, end, end_exp, today):
     return {"price_ok": price_ok, "start_ok": start_ok, "end_ok": end_ok, "active_today": active_today, "status": status}
 
 
-def build_weekly_specials() -> pd.DataFrame:
+def generate_mock_weekly() -> pd.DataFrame:
     today = date.today()
     data = [
         {
             "item_id": "WS-01",
             "name": "Weekly Special A",
             "category": "Specials",
-            # Local
             "local_price": 150.0,
             "local_start": today - timedelta(days=2),
             "local_end": today + timedelta(days=3),
             "local_expected_price": 150.0,
             "local_expected_start": today - timedelta(days=1),
             "local_expected_end": today + timedelta(days=6),
-            # Bin
             "bin_price": 148.0,
             "bin_start": today - timedelta(days=1),
             "bin_end": today + timedelta(days=4),
             "bin_expected_price": 150.0,
             "bin_expected_start": today - timedelta(days=1),
+            
             "bin_expected_end": today + timedelta(days=6),
-            # Online
             "online_price": 155.0,
             "online_start": today,
             "online_end": today + timedelta(days=7),
@@ -109,12 +107,15 @@ def build_weekly_specials() -> pd.DataFrame:
         },
     ]
     df = pd.DataFrame(data)
-    # ensure date fields are date objects
     for col in ["local_start","local_end","local_expected_start","local_expected_end",
                 "bin_start","bin_end","bin_expected_start","bin_expected_end",
                 "online_start","online_end","online_expected_start","online_expected_end"]:
         df[col] = pd.to_datetime(df[col]).dt.date
     return df
+
+
+def build_weekly_specials() -> pd.DataFrame:
+    return generate_mock_weekly()
 
 
 def render_overview():
