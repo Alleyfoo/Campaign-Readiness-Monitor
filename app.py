@@ -64,50 +64,92 @@ def validate_items(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 def build_weekly_specials() -> pd.DataFrame:
-    # Simple weekly specials with dates relative to today for demonstration
+    # Weekly specials with three systems: local, bin, online
     today = date.today()
-    start = today - timedelta(days=1)
-    end = today + timedelta(days=7)
+    base_start = today - timedelta(days=2)
+    base_end = today + timedelta(days=5)
     data = [
         {
             "item_id": "WS-01",
             "name": "Weekly Special A",
             "category": "Specials",
-            "expected_price": 150.0,
-            "system_price": 150.0,
-            "expected_start": start,
-            "expected_end": end,
-            "system_start": start,
-            "system_end": end,
+            # Local
+            "local_price": 150.0,
+            "local_start": today - timedelta(days=2),
+            "local_end": today + timedelta(days=3),
+            "local_expected_price": 150.0,
+            "local_expected_start": today - timedelta(days=1),
+            "local_expected_end": today + timedelta(days=6),
+            # Bin
+            "bin_price": 148.0,
+            "bin_start": today - timedelta(days=1),
+            "bin_end": today + timedelta(days=4),
+            "bin_expected_price": 150.0,
+            "bin_expected_start": today - timedelta(days=1),
+            "bin_expected_end": today + timedelta(days=6),
+            # Online
+            "online_price": 155.0,
+            "online_start": today,
+            "online_end": today + timedelta(days=7),
+            "online_expected_price": 155.0,
+            "online_expected_start": today,
+            "online_expected_end": today + timedelta(days=7),
             "margin": 0.15,
         },
         {
             "item_id": "WS-02",
             "name": "Weekly Special B",
             "category": "Specials",
-            "expected_price": 180.0,
-            "system_price": 180.0,
-            "expected_start": start,
-            "expected_end": end,
-            "system_start": start,
-            "system_end": end,
+            "local_price": 180.0,
+            "local_start": today - timedelta(days=2),
+            "local_end": today + timedelta(days=6),
+            "local_expected_price": 185.0,
+            "local_expected_start": today - timedelta(days=2),
+            "local_expected_end": today + timedelta(days=6),
+            "bin_price": 178.0,
+            "bin_start": today - timedelta(days=1),
+            "bin_end": today + timedelta(days=4),
+            "bin_expected_price": 180.0,
+            "bin_expected_start": today - timedelta(days=1),
+            "bin_expected_end": today + timedelta(days=4),
+            "online_price": 182.0,
+            "online_start": today,
+            "online_end": today + timedelta(days=5),
+            "online_expected_price": 180.0,
+            "online_expected_start": today,
+            "online_expected_end": today + timedelta(days=5),
             "margin": 0.12,
         },
         {
             "item_id": "WS-03",
             "name": "Weekly Special C",
             "category": "Gadgets",
-            "expected_price": 99.0,
-            "system_price": 99.0,
-            "expected_start": start,
-            "expected_end": end,
-            "system_start": start,
-            "system_end": end,
-            "margin": 0.20,
+            "local_price": 99.0,
+            "local_start": today - timedelta(days=2),
+            "local_end": today + timedelta(days=3),
+            "local_expected_price": 100.0,
+            "local_expected_start": today - timedelta(days=1),
+            "local_expected_end": today + timedelta(days=4),
+            "bin_price": 99.0,
+            "bin_start": today - timedelta(days=2),
+            "bin_end": today + timedelta(days=3),
+            "bin_expected_price": 99.0,
+            "bin_expected_start": today - timedelta(days=2),
+            "bin_expected_end": today + timedelta(days=5),
+            "online_price": 100.0,
+            "online_start": today,
+            "online_end": today + timedelta(days=6),
+            "online_expected_price": 100.0,
+            "online_expected_start": today,
+            "online_expected_end": today + timedelta(days=6),
+            "margin": 0.18,
         },
     ]
     df = pd.DataFrame(data)
-    for col in ["expected_start", "expected_end", "system_start", "system_end"]:
+    # keep dates as date objects
+    for col in ["local_start","local_end","local_expected_start","local_expected_end",
+                "bin_start","bin_end","bin_expected_start","bin_expected_end",
+                "online_start","online_end","online_expected_start","online_expected_end"]:
         df[col] = pd.to_datetime(df[col]).dt.date
     return df
 
@@ -115,8 +157,8 @@ def main():
     st.set_page_config(page_title="Product Setup Verification Dashboard", layout="wide")
     # Design port with safe fallback for mixed environments
     design_html = """
-      <div class="band-container" style="height:80px; background: linear-gradient(to right, #f4f1ea 0%, #f4f1ea 8%, #ccfbf1 22%, #14b8a6 50%, #ccfbf1 78%, #f4f1ea 92%); border-top:1px solid #0a1f24; border-bottom:1px solid #0a1f24; margin:8px 0 24px;"></div>
-      <div class="brand-wrap" style="padding:6px 12px;"><span class="brand-mark" style="font-family: Geister, serif; font-size:22px;">Product Setup Verification Dashboard</span></div>
+      <div class='band-container' style='height:80px; background: linear-gradient(to right, #f4f1ea 0%, #f4f1ea 8%, #ccfbf1 22%, #14b8a6 50%, #ccfbf1 78%, #f4f1ea 92%); border-top:1px solid #0a1f24; border-bottom:1px solid #0a1f24; margin:8px 0 24px;'></div>
+      <div class='brand-wrap' style='padding:6px 12px;'><span class='brand-mark' style='font-family: Geister, serif; font-size:22px;'>Product Setup Verification Dashboard</span></div>
     """
     try:
         st.html(design_html)
