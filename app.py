@@ -1,135 +1,119 @@
 import pandas as pd
+import numpy as np
 import streamlit as st
+from datetime import date
 
-# Simple pricing dashboard for products using a rule-based model
+"""
+Mock verification dashboard
+Replaces the previous price calculator with a simple synthetic verification dashboard.
+"""
 
-# Helpers: pricing model constants
-REGION_MULTIPLIERS = {
-    "North America": 1.15,
-    "Europe": 1.10,
-    "Asia": 1.20,
-    "South America": 1.05,
-}
-SEASON_MULTIPLIERS = {
-    "Off-peak": 1.00,
-    "Peak": 1.07,
-}
+def build_mock_items():
+    data = [
+        {"item_id": "P001", "name": "Widget Pro", "category": "Gadgets",
+         "expected_price": 199.0, "system_price": 210.0,
+         "expected_start": "2026-05-01", "expected_end": "2026-12-31",
+         "system_start": "2026-04-28", "system_end": "2027-01-15",
+         "margin": 0.15, "status": "Active"},
+        {"item_id": "P002", "name": "Widget Lite", "category": "Gadgets",
+         "expected_price": 149.0, "system_price": 145.0,
+         "expected_start": "2026-05-15", "expected_end": "2026-11-30",
+         "system_start": "2026-05-15", "system_end": "2026-11-30",
+         "margin": 0.18, "status": "Active"},
+        {"item_id": "P003", "name": "Panel X", "category": "Displays",
+         "expected_price": 299.0, "system_price": 320.0,
+         "expected_start": "2026-04-01", "expected_end": "2026-10-15",
+         "system_start": "2026-04-03", "system_end": "2026-10-15",
+         "margin": 0.12, "status": "Active"},
+        {"item_id": "P004", "name": "Dock Station", "category": "Accessories",
+         "expected_price": 89.0, "system_price": 95.0,
+         "expected_start": "2026-04-20", "expected_end": "2026-09-20",
+         "system_start": "2026-04-20", "system_end": "2026-09-20",
+         "margin": 0.14, "status": "Active"},
+        {"item_id": "P005", "name": "Battery Pack", "category": "Power",
+         "expected_price": 49.0, "system_price": 52.0,
+         "expected_start": "2026-03-01", "expected_end": "2026-08-31",
+         "system_start": "2026-03-01", "system_end": "2026-08-31",
+         "margin": 0.18, "status": "Active"},
+        {"item_id": "P006", "name": "Camera Module", "category": "Imaging",
+         "expected_price": 129.0, "system_price": 120.0,
+         "expected_start": "2026-05-01", "expected_end": "2026-12-31",
+         "system_start": "2026-05-02", "system_end": "2027-01-31",
+         "margin": 0.16, "status": "Active"},
+    ]
+    df = pd.DataFrame(data)
+    for col in ["expected_start","expected_end","system_start","system_end"]:
+        df[col] = pd.to_datetime(df[col]).dt.date
+    return df
 
-
-class CatalogPrice:
-    def __init__(self, subtotal, regional_adjustment, seasonal_adjustment,
-                 complexity_premium, risk_buffer, margin, total):
-        self.subtotal = subtotal
-        self.regional_adjustment = regional_adjustment
-        self.seasonal_adjustment = seasonal_adjustment
-        self.complexity_premium = complexity_premium
-        self.risk_buffer = risk_buffer
-        self.margin = margin
-        self.total = total
-
-
-def build_product_catalog() -> pd.DataFrame:
-    return pd.DataFrame(
-        [
-            {"product_type": "Laptop", "base_fee": 500, "hourly_rate": 30, "material_markup": 1.25, "risk_rate": 0.04},
-            {"product_type": "Smartphone", "base_fee": 300, "hourly_rate": 25, "material_markup": 1.22, "risk_rate": 0.03},
-            {"product_type": "Monitor", "base_fee": 250, "hourly_rate": 20, "material_markup": 1.20, "risk_rate": 0.05},
-            {"product_type": "Tablet", "base_fee": 320, "hourly_rate": 22, "material_markup": 1.23, "risk_rate": 0.04},
-        ]
-    )
-
-
-def calculate_catalog_price(
-    catalog: pd.DataFrame,
-    product_type: str,
-    region: str,
-    season: str,
-    complexity: float,
-    materials: float,
-    labour: float,
-    target_margin: float,
-) -> CatalogPrice:
-    item = catalog.loc[catalog["product_type"] == product_type].iloc[0]
-    base_and_work = (
-        item["base_fee"]
-        + materials * item["material_markup"]
-        + labour * item["hourly_rate"]
-    )
-    regional_adjustment = base_and_work * (REGION_MULTIPLIERS[region] - 1)
-    seasonal_adjustment = base_and_work * (SEASON_MULTIPLIERS[season] - 1)
-    complexity_premium = base_and_work * max(complexity - 5, 0) * 0.035
-    risk_buffer = base_and_work * item["risk_rate"] * (1 + complexity / 12)
-    subtotal = (
-        base_and_work
-        + regional_adjustment
-        + seasonal_adjustment
-        + complexity_premium
-        + risk_buffer
-    )
-    margin = subtotal * target_margin
-    return CatalogPrice(
-        subtotal=float(subtotal),
-        regional_adjustment=float(regional_adjustment),
-        seasonal_adjustment=float(seasonal_adjustment),
-        complexity_premium=float(complexity_premium),
-        risk_buffer=float(risk_buffer),
-        margin=float(margin),
-        total=float(subtotal + margin),
-    )
-
+def validate_items(df: pd.DataFrame) -> pd.DataFrame:
+    now = date.today()
+    df = df.copy()
+    df['start_date_matches'] = df['system_start'] == df['expected_start']
+    df['end_date_matches'] = df['system_end'] == df['expected_end']
+    df['price_matches'] = (df['system_price'] - df['expected_price']).abs() <= (df['expected_price'] * 0.05)
+    df['active_today'] = (pd.to_datetime(now) >= pd.to_datetime(df['system_start'])) & (pd.to_datetime(now) <= pd.to_datetime(df['system_end']))
+    df['margin_ok'] = df['margin'] >= 0.10
+    df['validation_status'] = 'OK'
+    df.loc[~df['active_today'], 'validation_status'] = 'Critical'
+    cond = df['validation_status'] != 'Critical'
+    df.loc[cond & (~df[['price_matches','start_date_matches','end_date_matches']].all(axis=1)), 'validation_status'] = 'Warning'
+    df['issue'] = ''
+    df.loc[df['validation_status'] == 'Critical', 'issue'] = 'Item not active today'
+    df.loc[df['validation_status'] == 'Warning', 'issue'] = 'Mismatch in pricing or dates'
+    return df
 
 def main():
-    st.set_page_config(page_title="Product Pricing Dashboard", layout="wide")
-    st.title("Product Pricing Dashboard")
+    st.set_page_config(page_title="Product Setup Verification Dashboard", layout="wide")
+    st.title("Product Setup Verification Dashboard")
 
-    catalog = build_product_catalog()
+    df = build_mock_items()
+    df = validate_items(df)
 
-    with st.sidebar:
-        st.header("Inputs")
-        product_type = st.selectbox("Product", catalog["product_type"].tolist())
-        region = st.selectbox("Region", list(REGION_MULTIPLIERS.keys()))
-        season = st.selectbox("Season", list(SEASON_MULTIPLIERS.keys()))
-        complexity = st.slider("Complexity", 0.0, 10.0, 3.0, 0.5)
-        materials = st.slider("Materials (cost)", 0.0, 2000.0, 400.0, 50.0)
-        labour = st.slider("Labour (hours)", 0.0, 200.0, 40.0, 5.0)
-        target_margin = st.slider("Target Margin", 0.0, 0.5, 0.15, 0.01)
+    total = len(df)
+    ok = (df['validation_status'] == 'OK').sum()
+    warn = (df['validation_status'] == 'Warning').sum()
+    crit = (df['validation_status'] == 'Critical').sum()
 
-    price = calculate_catalog_price(
-        catalog,
-        product_type,
-        region,
-        season,
-        complexity,
-        materials,
-        labour,
-        target_margin,
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Total", total)
+    c2.metric("OK", int(ok))
+    c3.metric("Warnings", int(warn))
+    c4.metric("Critical", int(crit))
+
+    # Filter by status
+    selected = st.multiselect("Filter by status", ['OK','Warning','Critical'], default=['OK','Warning','Critical'])
+    filtered = df[df['validation_status'].isin(selected)]
+
+    st.subheader("Main Validation")
+    display_cols = ['item_id','name','category','expected_price','system_price',
+                    'start_date_matches','end_date_matches','price_matches','active_today','margin_ok','validation_status','issue']
+    st.dataframe(
+        filtered[display_cols].rename(columns={
+            'name':'Name','category':'Category','expected_price':'Expected Price','system_price':'System Price',
+            'start_date_matches':'Start Match','end_date_matches':'End Match','price_matches':'Price Match',
+            'active_today':'Active Today','margin_ok':'Margin OK','validation_status':'Status','issue':'Issue'
+        })
     )
 
-    # Summary cards
-    st.metric(label="Subtotal", value=f"{price.subtotal:,.2f}")
-    st.metric(label="Regional Adj.", value=f"{price.regional_adjustment:,.2f}")
-    st.metric(label="Seasonal Adj.", value=f"{price.seasonal_adjustment:,.2f}")
-    st.metric(label="Complexity Premium", value=f"{price.complexity_premium:,.2f}")
-    st.metric(label="Risk Buffer", value=f"{price.risk_buffer:,.2f}")
-    st.metric(label="Margin", value=f"{price.margin:,.2f}")
-    st.metric(label="Total", value=f"{price.total:,.2f}")
-
-    # Detailed breakdown
-    breakdown = {
-        "Component": ["Subtotal", "Regional Adj.", "Seasonal Adj.",
-                      "Complexity Premium", "Risk Buffer", "Margin", "Total"],
-        "Value": [price.subtotal, price.regional_adjustment, price.seasonal_adjustment,
-                  price.complexity_premium, price.risk_buffer, price.margin, price.total],
-    }
-    df = pd.DataFrame(breakdown)
-    st.dataframe(df.style.format({"Value": "{:.2f}"}))
-
-    # Simple visualization
-    viz = pd.DataFrame({
-        "Component": ["Subtotal", "Margin"],
-        "Amount": [price.subtotal, price.margin],
-    })
-    st.bar_chart(viz.set_index("Component"))
+    st.subheader("Selected Item Detail")
+    if not filtered.empty:
+        selected_id = st.selectbox("Select item", filtered['item_id'].tolist())
+        detail = filtered[filtered['item_id'] == selected_id].iloc[0]
+        detail_table = pd.DataFrame({
+            'Field': [
+                'Item','Category','Expected Price','System Price',
+                'Start (Expected/System)','End (Expected/System)','Margin','Active Today','Status','Issue'
+            ],
+            'Value': [
+                detail['name'], detail['category'], detail['expected_price'], detail['system_price'],
+                f"{detail['expected_start']} / {detail['system_start']}",
+                f"{detail['expected_end']} / {detail['system_end']}", detail['margin'], detail['active_today'], detail['validation_status'], detail['issue']
+            ]
+        })
+        st.table(detail_table)
+    else:
+        st.write("No items to display.")
 
 if __name__ == "__main__":
     main()
