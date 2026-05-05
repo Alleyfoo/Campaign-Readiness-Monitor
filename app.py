@@ -120,18 +120,16 @@ def build_weekly_specials() -> pd.DataFrame:
 def render_overview():
     weekly = build_weekly_specials()
     weekly = weekly.copy()
-    weekly = weekly
-    weekly = weekly.dropna(how='all', axis=1, inplace=False)  # safeguard
-    weekly = weekly if isinstance(weekly, pd.DataFrame) else pd.DataFrame()
-    weekly = weekly
-    weekly = weekly
-    # Simplified overview: KPI + tiny preview
-    weekly = weekly.fillna(0)
+    # Safeguard: if overall_status isn't present yet, don't assume it exists
+    if 'overall_status' in weekly.columns:
+        ok = int((weekly['overall_status'] == 'OK').sum())
+        warn = int((weekly['overall_status'] == 'Warning').sum())
+        crit = int((weekly['overall_status'] == 'Critical').sum())
+    else:
+        ok = 0
+        warn = 0
+        crit = 0
     total = len(weekly)
-    # derive an OK count if possible
-    ok = len(weekly[(weekly.get('overall_status') == 'OK') | (weekly.get('overall_status') == 'None')])
-    warn = len(weekly[weekly.get('overall_status') == 'Warning'])
-    crit = len(weekly[weekly.get('overall_status') == 'Critical'])
     html_kpi = f'''
     <div class="kpi-grid">
       <div class="kpi-card"><div class="kpi-label">Total</div><div class="kpi-value">{total}</div></div>
@@ -141,11 +139,9 @@ def render_overview():
     </div>
     '''
     st.markdown(html_kpi, unsafe_allow_html=True)
-    st.subheader("Weekly Specials Preview (Overview)")
-    preview = weekly[["item_id","name","category"].index]  # fallback to avoid crash if empty
-    preview = weekly[["item_id","name","category"]] if not weekly.empty else pd.DataFrame(columns=["item_id","name","category"])
-    preview = weekly[["item_id","name","category"]].rename(columns={"item_id":"ID","name":"Name","category":"Category"})
-    if not preview.empty:
+    st.subheader("Weekly Specials Preview")
+    if not weekly.empty:
+        preview = weekly[["item_id","name","category"]].rename(columns={"item_id":"ID","name":"Name","category":"Category"})
         st.dataframe(preview)
     else:
         st.write("No weekly specials configured.")
