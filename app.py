@@ -69,6 +69,63 @@ def build_mock_items():
         df[col] = pd.to_datetime(df[col]).dt.date
     return df
 
+def render_overview():
+    # Overview KPI using the design system
+    weekly = build_weekly_specials()
+    weekly = validate_items(weekly)
+    total = len(weekly)
+    ok = int((weekly.get('overall_status') == 'OK').sum())
+    warn = int((weekly.get('overall_status') == 'Warning').sum())
+    crit = int((weekly.get('overall_status') == 'Critical').sum())
+    html_kpi = f'''
+    <div class="kpi-grid">
+      <div class="kpi-card"><div class="kpi-label">Total</div><div class="kpi-value">{total}</div></div>
+      <div class="kpi-card"><div class="kpi-label">OK</div><div class="kpi-value">{int(ok)}</div></div>
+      <div class="kpi-card"><div class="kpi-label">Warnings</div><div class="kpi-value">{int(warn)}</div></div>
+      <div class="kpi-card"><div class="kpi-label">Critical</div><div class="kpi-value">{int(crit)}</div></div>
+    </div>
+    '''
+    st.markdown(html_kpi, unsafe_allow_html=True)
+    st.subheader("Weekly Specials Preview")
+    preview = weekly[["item_id","name","overall_status"]].rename(columns={"item_id":"ID","name":"Name","overall_status":"Status"})
+    st.dataframe(preview)
+
+def render_weekly_specials():
+    weekly = build_weekly_specials()
+    weekly = validate_items(weekly)
+    today = date.today()
+    # Compute per-system statuses
+    for idx, row in weekly.iterrows():
+        local = _verify_system(row["local_price"], row["local_expected_price"], row["local_start"], row["local_expected_start"], row["local_end"], row["local_expected_end"], today)
+        bin_ = _verify_system(row["bin_price"], row["bin_expected_price"], row["bin_start"], row["bin_expected_start"], row["bin_end"], row["bin_expected_end"], today)
+        online = _verify_system(row["online_price"], row["online_expected_price"], row["online_start"], row["online_expected_start"], row["online_end"], row["online_expected_end"], today)
+        weekly.at[idx, "local_status"] = local["status"]
+        weekly.at[idx, "bin_status"] = bin_["status"]
+        weekly.at[idx, "online_status"] = online["status"]
+        statuses = [local["status"], bin_["status"], online["status"]]
+        if any(s == "Critical" for s in statuses):
+            weekly.at[idx, "overall_status"] = "Critical"
+        elif any(s == "Warning" for s in statuses):
+            weekly.at[idx, "overall_status"] = "Warning"
+        else:
+            weekly.at[idx, "overall_status"] = "OK"
+
+    # Render per-item collapsibles
+    for _, row in weekly.iterrows():
+        label = f"{row['name']} ({row['item_id']}) - Overall: {row.get('overall_status','OK')}"
+        with st.expander(label, expanded=False):
+            html = []
+            html.append("<table class='weekly'>")
+            html.append("<thead><tr><th>System</th><th>Price</th><th>Window</th><th>Expected Price</th><th>Expected Window</th><th>Status</th></tr></thead>")
+            html.append("<tbody>")
+            def add(system, price, win, exp_price, exp_win, status):
+                html.append(f"<tr><td>{system}</td><td>{price:.2f}</td><td>{win}</td><td>{exp_price:.2f}</td><td>{exp_win}</td><td>{status}</td></tr>")
+            add("Local", row['local_price'], f"{row['local_start']}-{row['local_end']}", row['local_expected_price'], f"{row['local_expected_start']}-{row['local_expected_end']}", row.get('local_status','OK'))
+            add("Bin", row['bin_price'], f"{row['bin_start']}-{row['bin_end']}", row['bin_expected_price'], f"{row['bin_expected_start']}-{row['bin_expected_end']}", row.get('bin_status','OK'))
+            add("Online", row['online_price'], f"{row['online_start']}-{row['online_end']}", row['online_expected_price'], f"{row['online_expected_start']}-{row['online_expected_end']}", row.get('online_status','OK'))
+            html.append("</tbody></table>")
+            st.markdown("".join(html), unsafe_allow_html=True)
+
 def validate_items(df: pd.DataFrame) -> pd.DataFrame:
     # Robust validator: only runs if expected columns exist
     now = date.today()
