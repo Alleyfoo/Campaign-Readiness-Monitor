@@ -120,7 +120,7 @@ def build_weekly_specials() -> pd.DataFrame:
 def render_overview():
     weekly = build_weekly_specials()
     weekly = weekly.copy()
-    # Safeguard: if overall_status isn't present yet, don't assume it exists
+    # Safeguard: compute KPI from existing data only
     if 'overall_status' in weekly.columns:
         ok = int((weekly['overall_status'] == 'OK').sum())
         warn = int((weekly['overall_status'] == 'Warning').sum())
