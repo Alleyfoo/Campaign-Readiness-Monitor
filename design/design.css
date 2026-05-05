@@ -1,0 +1,30 @@
+/* Lightweight design tokens inspired by the reference design */
+:root {
+  --ink: #0A1F24;
+  --ink-2: #122E35;
+  --ink-3: #1B3F47;
+  --paper: #F4F1EA;
+  --paper-2: #EAE5DA;
+  --paper-3: #DDD6C5;
+  --teal: #14B8A6;
+  --teal-soft: #CCFBF1;
+  --serif: "Instrument Serif", serif;
+  --sans: Geometric, Inter, sans-serif;
+  --mono: "Geist Mono", ui-monospace, monospace;
+}
+
+/* Brand header */
+.band-container {
+  height: 80px;
+  background: linear-gradient(to right, var(--paper-3) 0%, var(--paper-3) 8%, var(--teal-soft) 22%, var(--teal) 50%, var(--teal-soft) 78%, var(--paper-3) 92%, var(--paper-3) 100%);
+  border-top: 1px solid var(--ink);
+  border-bottom: 1px solid var(--ink);
+}
+.brand-bar { display: flex; align-items: center; padding: 8px 12px; gap: 12px; }
+.brand { font-family: var(--serif); font-size: 20px; }
+
+/* KPI grid */
+.kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin: 12px 0; }
+.kpi-card { background: var(--paper); border: 1px solid var(--ink); border-radius: 8px; padding: 14px; }
+.kpi-label { font-family: var(--mono); font-size: 11px; text-transform: uppercase; letter-spacing: .12em; color: var(--ink-3); }
+.kpi-value { font-family: var(--serif); font-size: 28px; color: var(--ink); }

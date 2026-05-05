@@ -2,6 +2,16 @@ import pandas as pd
 import numpy as np
 import streamlit as st
 from datetime import date, timedelta
+import os
+
+def load_design_css():
+    css_path = os.path.join(os.path.dirname(__file__), "design", "design.css")
+    try:
+        with open(css_path, "r", encoding="utf-8") as f:
+            css = f.read()
+        return f"<style>\n{css}\n</style>"
+    except Exception:
+        return ""
 
 """
 Mock verification dashboard
@@ -270,6 +280,10 @@ def build_weekly_specials() -> pd.DataFrame:
 
 def main():
     st.set_page_config(page_title="Product Setup Verification Dashboard", layout="wide")
+    # Load and apply design CSS from design/design.css (Step 1)
+    css = load_design_css()
+    if css:
+        st.markdown(css, unsafe_allow_html=True)
     # Inject design tokens for a richer UI
     st.markdown(load_design_css(), unsafe_allow_html=True)
     # Design port with safe fallback for mixed environments
