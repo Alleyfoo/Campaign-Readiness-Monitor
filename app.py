@@ -8,6 +8,29 @@ Mock verification dashboard
 Replaces the previous price calculator with a simple synthetic verification dashboard.
 """
 
+def load_design_css() -> str:
+    # Lightweight design system tokens to improve visuals and bring it closer to the reference design
+    return '''
+<style>
+:root {
+  --ink: #0A1F24;
+  --paper: #F4F1EA;
+  --paper-2: #EAE5DA;
+  --paper-3: #DDD6C5;
+  --teal: #14B8A6;
+  --teal-soft: #CCFBF1;
+  --mono: "Geist Mono",  ui-monospace, monospace;
+  --serif: serif;
+  --sans: sans-serif;
+}
+.kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin: 12px 0; }
+.kpi-card { background: var(--paper); border: 1px solid var(--ink); border-radius: 8px; padding: 14px; }
+.kpi-label { font-family: var(--mono); font-size: 12px; text-transform: uppercase; letter-spacing: 0.12em; color: #1f2937; }
+.kpi-value { font-family: var(--serif); font-size: 28px; color: var(--ink); }
+.brand-bar { display:flex; align-items:center; gap:12px; padding:6px 12px; }
+.brand-bar .brand { font-family: var(--serif); font-size: 20px; }
+.band-container { height: 80px; background: linear-gradient(to right, #f4f1ea 0%, #f4f1ea 8%, #ccfbf1 22%, #14b8a6 50%, #ccfbf1 78%, #f4f1ea 92%); border-top: 1px solid var(--ink); border-bottom: 1px solid var(--ink); margin: 8px 0 8px; }
+
 def build_mock_items():
     data = [
         {"item_id": "P001", "name": "Widget Pro", "category": "Gadgets",
@@ -190,6 +213,8 @@ def build_weekly_specials() -> pd.DataFrame:
 
 def main():
     st.set_page_config(page_title="Product Setup Verification Dashboard", layout="wide")
+    # Inject design tokens for a richer UI
+    st.markdown(load_design_css(), unsafe_allow_html=True)
     # Design port with safe fallback for mixed environments
     design_html = """
       <div class='band-container' style='height:80px; background: linear-gradient(to right, #f4f1ea 0%, #f4f1ea 8%, #ccfbf1 22%, #14b8a6 50%, #ccfbf1 78%, #f4f1ea 92%); border-top:1px solid #0a1f24; border-bottom:1px solid #0a1f24; margin:8px 0 24px;'></div>
