@@ -175,6 +175,7 @@ def render_weekly_specials():
             html.append("<table class='weekly'>")
             html.append("<thead><tr><th>System</th><th>Price</th><th>Window</th><th>Expected Price</th><th>Expected Window</th><th>Status</th></tr></thead>")
             html.append("<tbody>")
+            inner = []
             # Build per-system rows with rich tooltips
             local_tip_text = (
                 f"Price: {row['local_price']:.2f} (exp {row['local_expected_price']:.2f})\\n"
@@ -182,42 +183,42 @@ def render_weekly_specials():
                 f"Active: {row.get('local_status','OK')}"
             )
             local_tip_html = local_tip_text.replace("\n", "<br>")
-            inner.append(
+            html.append(
                 f"<tr><td class='system-cell'>Local <span class='tooltip'>{local_tip_html}</span></td>"
             )
-            inner.append(f"<td>{row['local_price']:.2f}</td>")
-            inner.append(f"<td>{row['local_start']}-{row['local_end']}</td>")
-            inner.append(f"<td>{row['local_expected_price']:.2f}</td>")
-            inner.append(f"<td>{row['local_expected_start']}-{row['local_expected_end']}</td>")
-            inner.append(f"<td>{row.get('local_status','OK')}</td></tr>")
+            html.append(f"<td>{row['local_price']:.2f}</td>")
+            html.append(f"<td>{row['local_start']}-{row['local_end']}</td>")
+            html.append(f"<td>{row['local_expected_price']:.2f}</td>")
+            html.append(f"<td>{row['local_expected_start']}-{row['local_expected_end']}</td>")
+            html.append(f"<td>{row.get('local_status','OK')}</td></tr>")
             bin_tip_text = (
                 f"Price: {row['bin_price']:.2f} (exp {row['bin_expected_price']:.2f})\\n"
                 f"Dates: {row['bin_start']} - {row['bin_end']} / {row['bin_expected_start']} - {row['bin_expected_end']}\\n"
                 f"Active: {row.get('bin_status','OK')}"
             )
             bin_tip_html = bin_tip_text.replace("\n", "<br>")
-            inner.append(
+            html.append(
                 f"<td class='system-cell'>Bin <span class='tooltip'>{bin_tip_html}</span></td>"
             )
-            inner.append(f"<td>{row['bin_price']:.2f}</td>")
-            inner.append(f"<td>{row['bin_start']}-{row['bin_end']}</td>")
-            inner.append(f"<td>{row['bin_expected_price']:.2f}</td>")
-            inner.append(f"<td>{row['bin_expected_start']}-{row['bin_expected_end']}</td>")
-            inner.append(f"<td>{row.get('bin_status','OK')}</td></tr>")
+            html.append(f"<td>{row['bin_price']:.2f}</td>")
+            html.append(f"<td>{row['bin_start']}-{row['bin_end']}</td>")
+            html.append(f"<td>{row['bin_expected_price']:.2f}</td>")
+            html.append(f"<td>{row['bin_expected_start']}-{row['bin_expected_end']}</td>")
+            html.append(f"<td>{row.get('bin_status','OK')}</td></tr>")
             online_tip_text = (
                 f"Price: {row['online_price']:.2f} (exp {row['online_expected_price']:.2f})\\n"
                 f"Dates: {row['online_start']} - {row['online_end']} / {row['online_expected_start']} - {row['online_expected_end']}\\n"
                 f"Active: {row.get('online_status','OK')}"
             )
             online_tip_html = online_tip_text.replace("\n", "<br>")
-            inner.append(
+            html.append(
                 f"<td class='system-cell'>Online <span class='tooltip'>{online_tip_html}</span></td>"
             )
-            inner.append(f"<td>{row['online_price']:.2f}</td>")
-            inner.append(f"<td>{row['online_start']}-{row['online_end']}</td>")
-            inner.append(f"<td>{row['online_expected_price']:.2f}</td>")
-            inner.append(f"<td>{row['online_expected_start']}-{row['online_expected_end']}</td>")
-            inner.append(f"<td>{row.get('online_status','OK')}</td></tr>")
+            html.append(f"<td>{row['online_price']:.2f}</td>")
+            html.append(f"<td>{row['online_start']}-{row['online_end']}</td>")
+            html.append(f"<td>{row['online_expected_price']:.2f}</td>")
+            html.append(f"<td>{row['online_expected_start']}-{row['online_expected_end']}</td>")
+            html.append(f"<td>{row.get('online_status','OK')}</td></tr>")
             html.append("</tbody></table>")
             st.markdown("".join(html), unsafe_allow_html=True)
 
