@@ -1,7 +1,5 @@
 # Campaign Readiness Monitor
 
-Internal codename: Goblin Manager.
-
 Campaign Readiness Monitor compares planned campaign items against configured product, price, stock and channel data, then turns mismatches into actionable review cards.
 
 The campaign plan describes intention. The system data describes truth. The dashboard shows the gap.
