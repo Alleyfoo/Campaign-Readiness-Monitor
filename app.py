@@ -1636,7 +1636,7 @@ def main():
         """
     <div class="brand-bar">
       <span class="brand">Campaign Readiness Monitor</span>
-      <span style="color:var(--ink-3);font-size:13px;font-family:var(--mono)">Goblin Manager</span>
+      <span style="color:var(--ink-3);font-size:13px;font-family:var(--mono)">Specials display</span>
     </div>
     """,
         unsafe_allow_html=True,
