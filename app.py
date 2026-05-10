@@ -1211,15 +1211,21 @@ def render_timeline_view(
     def date_to_pct(d):
         if pd.isna(d) or d is None:
             return None
-        return max(
-            0, min(100, (pd.Timestamp(d) - timeline_start).days / total_days * 100)
+        return round(
+            max(
+                0, min(100, (pd.Timestamp(d) - timeline_start).days / total_days * 100)
+            ),
+            1,
         )
 
     def pct_width(s, e):
         if pd.isna(s) or pd.isna(e) or s is None or e is None:
             return 0
-        return max(
-            0, min(100, (pd.Timestamp(e) - pd.Timestamp(s)).days / total_days * 100)
+        return round(
+            max(
+                0, min(100, (pd.Timestamp(e) - pd.Timestamp(s)).days / total_days * 100)
+            ),
+            1,
         )
 
     c_exc = [e for e in exceptions if e["campaign_id"] == campaign_id]
@@ -1343,126 +1349,201 @@ def render_timeline_view(
     plan_w = pct_width(p_start, p_end)
     today_pct = date_to_pct(ANCHOR)
 
+    st.markdown("### At a glance")
+
+    h_rows = ""
     for tr in timeline_rows:
         sev = tr["severity"]
-        sev_color = SEVERITY_COLORS.get(sev, "#6B7280")
-        card_class = (
-            "crit" if sev == "Critical" else ("warn" if sev == "Warning" else "ok")
-        )
-
+        dot_color = SEVERITY_COLORS.get(sev, "#6B7280")
         price_left = date_to_pct(tr["price_start"])
         price_w = pct_width(tr["price_start"], tr["price_end"])
-        price_bar_class = f"timeline-bar-price-{tr['price_status']}"
-
-        vis_left = date_to_pct(tr["price_start"])
-        vis_w = pct_width(tr["price_start"], tr["price_end"])
-        vis_bar_class = f"timeline-bar-vis-{tr['vis_status']}"
-
+        price_cls = f"tl-bar-price-{tr['price_status']}"
         stock_pct = (
-            min(100, (tr["stock_on_hand"] / tr["forecast_demand"] * 100))
+            round(min(100, (tr["stock_on_hand"] / tr["forecast_demand"] * 100)), 1)
             if tr["forecast_demand"] > 0
             else 100
         )
-        stock_bar_class = f"timeline-bar-stock-{tr['stock_status']}"
+        stock_cls = f"tl-bar-stock-{tr['stock_status']}"
 
-        price_html = ""
+        price_seg = ""
         if tr["price_status"] == "crit" or price_left is None:
-            price_html = (
-                '<div class="timeline-bar timeline-bar-missing" '
-                'style="left:0%;width:100%"></div>'
-                '<span class="timeline-missing-label">[missing]</span>'
+            price_seg = (
+                '<div class="tl-bar tl-bar-missing" style="left:0%;width:100%"></div>'
             )
         else:
-            price_html = (
-                f'<div class="timeline-bar {price_bar_class}" '
-                f'style="left:{price_left}%;width:{price_w}%"></div>'
-            )
+            price_seg = f'<div class="tl-bar {price_cls}" style="left:{price_left}%;width:{price_w}%"></div>'
 
-        vis_html = ""
-        if tr["vis_status"] == "crit":
-            vis_html = (
-                '<div class="timeline-bar timeline-bar-missing" '
-                'style="left:0%;width:100%"></div>'
-                '<span class="timeline-missing-label">[hidden]</span>'
-            )
-        elif tr["vis_status"] == "warn":
-            vis_html = (
-                f'<div class="timeline-bar {vis_bar_class}" '
-                f'style="left:{vis_left}%;width:{vis_w}%"></div>'
-            )
-        else:
-            vis_html = (
-                f'<div class="timeline-bar {vis_bar_class}" '
-                f'style="left:{vis_left}%;width:{vis_w}%"></div>'
-            )
-
-        stock_html = (
-            f'<div class="timeline-bar {stock_bar_class}" '
-            f'style="left:0%;width:{stock_pct}%"></div>'
+        stock_seg = (
+            f'<div class="tl-bar {stock_cls}" style="left:0%;width:{stock_pct}%"></div>'
         )
 
-        img_marker = (
-            '<span class="timeline-content-marker ready">image ready</span>'
-            if tr["image_ready"]
-            else '<span class="timeline-content-marker missing">image missing</span>'
-        )
-        ctn_marker = (
-            '<span class="timeline-content-marker ready">content ready</span>'
-            if tr["content_ready"]
-            else '<span class="timeline-content-marker missing">content missing</span>'
-        )
-
-        issue_tags_html = ""
+        issue_dots = ""
         if tr["issues"]:
-            tags = ""
             for issue in tr["issues"]:
-                isev = issue["severity"].lower()[:4]
-                tags += (
-                    f'<span class="timeline-issue-tag {isev}">'
-                    f'{issue["issue_type"]}</span>'
-                )
-            issue_tags_html = f'<div class="timeline-issues-row">{tags}</div>'
+                ic = SEVERITY_COLORS.get(issue["severity"], "#6B7280")
+                issue_dots += f'<span class="tl-issue-dot" style="background:{ic}" title="{issue["issue_type"]}"></span>'
 
-        html = f"""
-        <div class="timeline-card {card_class}">
-          <div class="timeline-header">
-            <span class="timeline-severity" style="background:{sev_color}">{sev}</span>
-            <span class="timeline-sku">{tr['item_id']}</span>
-            <span class="timeline-product">{tr['product_name']}</span>
-          </div>
-          <div class="timeline-lane">
-            <div class="timeline-lane-label">Campaign plan</div>
-            <div class="timeline-track">
-              <div class="timeline-bar timeline-bar-plan" style="left:{plan_left}%;width:{plan_w}%"></div>
-              <div class="timeline-marker" style="left:{today_pct}%"><div class="timeline-marker-label">Today</div></div>
+        h_rows += f"""
+        <tr>
+          <td class="tl-label">
+            <span class="tl-dot" style="background:{dot_color}"></span>
+            <span class="tl-sku">{tr['item_id']}</span>
+            <span class="tl-name">{tr['product_name']}</span>
+            {issue_dots}
+          </td>
+          <td class="tl-track-cell">
+            <div class="tl-track">
+              <div class="tl-bar tl-bar-plan" style="left:{plan_left}%;width:{plan_w}%"></div>
+              {price_seg}
+              {stock_seg}
+              <div class="tl-marker" style="left:{today_pct}%"><div class="tl-marker-label">Today</div></div>
             </div>
-          </div>
-          <div class="timeline-lane">
-            <div class="timeline-lane-label">System price</div>
-            <div class="timeline-track">{price_html}</div>
-          </div>
-          <div class="timeline-lane">
-            <div class="timeline-lane-label">Visibility</div>
-            <div class="timeline-track">{vis_html}</div>
-          </div>
-          <div class="timeline-lane">
-            <div class="timeline-lane-label">Stock coverage</div>
-            <div class="timeline-track">
-              {stock_html}
-              <span style="position:absolute;right:4px;top:0;font-size:9px;font-family:var(--mono);color:var(--ink-3);line-height:16px">{tr['stock_on_hand']}/{tr['forecast_demand']} ({tr['stock_risk']})</span>
+          </td>
+        </tr>"""
+
+    date_marks = ""
+    for i in range(0, total_days + 1, max(1, total_days // 6)):
+        d = timeline_start + timedelta(days=i)
+        pct = round(i / total_days * 100, 1)
+        date_marks += f'<span style="position:absolute;left:{pct}%;top:-14px;font-family:var(--mono);font-size:8px;color:var(--ink-3);transform:translateX(-50%)">{str(d)[5:10]}</span>'
+
+    html = f"""
+    <div class="tl-table-wrap">
+      <table class="tl-table">
+        <thead><tr><th class="tl-label-head">Item</th><th class="tl-track-head"><div style="position:relative;height:16px">{date_marks}</div></th></tr></thead>
+        <tbody>{h_rows}</tbody>
+      </table>
+      <div class="tl-table-legend">
+        <span><span class="tl-swatch tl-swatch-plan"></span> Plan window</span>
+        <span><span class="tl-swatch tl-swatch-price"></span> System price</span>
+        <span><span class="tl-swatch tl-swatch-stock"></span> Stock coverage</span>
+        <span><span class="tl-swatch tl-swatch-missing"></span> Missing / gap</span>
+      </div>
+    </div>
+    """
+    st.markdown(html, unsafe_allow_html=True)
+
+    with st.expander("Detail cards"):
+        for tr in timeline_rows:
+            sev = tr["severity"]
+            sev_color = SEVERITY_COLORS.get(sev, "#6B7280")
+            card_class = (
+                "crit" if sev == "Critical" else ("warn" if sev == "Warning" else "ok")
+            )
+
+            price_left = date_to_pct(tr["price_start"])
+            price_w = pct_width(tr["price_start"], tr["price_end"])
+            price_bar_class = f"timeline-bar-price-{tr['price_status']}"
+
+            vis_left = date_to_pct(tr["price_start"])
+            vis_w = pct_width(tr["price_start"], tr["price_end"])
+            vis_bar_class = f"timeline-bar-vis-{tr['vis_status']}"
+
+            stock_pct = (
+                min(100, (tr["stock_on_hand"] / tr["forecast_demand"] * 100))
+                if tr["forecast_demand"] > 0
+                else 100
+            )
+            stock_bar_class = f"timeline-bar-stock-{tr['stock_status']}"
+
+            price_html = ""
+            if tr["price_status"] == "crit" or price_left is None:
+                price_html = (
+                    '<div class="timeline-bar timeline-bar-missing" '
+                    'style="left:0%;width:100%"></div>'
+                    '<span class="timeline-missing-label">[missing]</span>'
+                )
+            else:
+                price_html = (
+                    f'<div class="timeline-bar {price_bar_class}" '
+                    f'style="left:{price_left}%;width:{price_w}%"></div>'
+                )
+
+            vis_html = ""
+            if tr["vis_status"] == "crit":
+                vis_html = (
+                    '<div class="timeline-bar timeline-bar-missing" '
+                    'style="left:0%;width:100%"></div>'
+                    '<span class="timeline-missing-label">[hidden]</span>'
+                )
+            elif tr["vis_status"] == "warn":
+                vis_html = (
+                    f'<div class="timeline-bar {vis_bar_class}" '
+                    f'style="left:{vis_left}%;width:{vis_w}%"></div>'
+                )
+            else:
+                vis_html = (
+                    f'<div class="timeline-bar {vis_bar_class}" '
+                    f'style="left:{vis_left}%;width:{vis_w}%"></div>'
+                )
+
+            stock_html = (
+                f'<div class="timeline-bar {stock_bar_class}" '
+                f'style="left:0%;width:{stock_pct}%"></div>'
+            )
+
+            img_marker = (
+                '<span class="timeline-content-marker ready">image ready</span>'
+                if tr["image_ready"]
+                else '<span class="timeline-content-marker missing">image missing</span>'
+            )
+            ctn_marker = (
+                '<span class="timeline-content-marker ready">content ready</span>'
+                if tr["content_ready"]
+                else '<span class="timeline-content-marker missing">content missing</span>'
+            )
+
+            issue_tags_html = ""
+            if tr["issues"]:
+                tags = ""
+                for issue in tr["issues"]:
+                    isev = issue["severity"].lower()[:4]
+                    tags += (
+                        f'<span class="timeline-issue-tag {isev}">'
+                        f'{issue["issue_type"]}</span>'
+                    )
+                issue_tags_html = f'<div class="timeline-issues-row">{tags}</div>'
+
+            html = f"""
+            <div class="timeline-card {card_class}">
+              <div class="timeline-header">
+                <span class="timeline-severity" style="background:{sev_color}">{sev}</span>
+                <span class="timeline-sku">{tr['item_id']}</span>
+                <span class="timeline-product">{tr['product_name']}</span>
+              </div>
+              <div class="timeline-lane">
+                <div class="timeline-lane-label">Campaign plan</div>
+                <div class="timeline-track">
+                  <div class="timeline-bar timeline-bar-plan" style="left:{plan_left}%;width:{plan_w}%"></div>
+                  <div class="timeline-marker" style="left:{today_pct}%"><div class="timeline-marker-label">Today</div></div>
+                </div>
+              </div>
+              <div class="timeline-lane">
+                <div class="timeline-lane-label">System price</div>
+                <div class="timeline-track">{price_html}</div>
+              </div>
+              <div class="timeline-lane">
+                <div class="timeline-lane-label">Visibility</div>
+                <div class="timeline-track">{vis_html}</div>
+              </div>
+              <div class="timeline-lane">
+                <div class="timeline-lane-label">Stock coverage</div>
+                <div class="timeline-track">
+                  {stock_html}
+                  <span style="position:absolute;right:4px;top:0;font-size:9px;font-family:var(--mono);color:var(--ink-3);line-height:16px">{tr['stock_on_hand']}/{tr['forecast_demand']} ({tr['stock_risk']})</span>
+                </div>
+              </div>
+              <div class="timeline-lane">
+                <div class="timeline-lane-label">Content</div>
+                <div class="timeline-content-markers">{img_marker} {ctn_marker}</div>
+              </div>
+              {issue_tags_html}
+              <div class="timeline-dates">
+                <span>{str(timeline_start)[:10]}</span><span>{str(timeline_end)[:10]}</span>
+              </div>
             </div>
-          </div>
-          <div class="timeline-lane">
-            <div class="timeline-lane-label">Content</div>
-            <div class="timeline-content-markers">{img_marker} {ctn_marker}</div>
-          </div>
-          {issue_tags_html}
-          <div class="timeline-dates">
-            <span>{str(timeline_start)[:10]}</span><span>{str(timeline_end)[:10]}</span>
-          </div>
-        </div>
-        """
-        st.markdown(html, unsafe_allow_html=True)
+            """
+            st.markdown(html, unsafe_allow_html=True)
 
 
 def render_plan_quality_cards(plan_issues: list[dict], campaign_id: str):
