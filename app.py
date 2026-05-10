@@ -566,6 +566,153 @@ def generate_system_truth() -> pd.DataFrame:
     return df
 
 
+def check_plan_quality(plan: pd.DataFrame) -> list[dict]:
+    issues = []
+    for campaign_id, group in plan.groupby("campaign_id"):
+        campaign_name = group["campaign_name"].iloc[0]
+        campaign_source = group["campaign_source"].iloc[0]
+        p_start = pd.Timestamp(group["planned_start"].iloc[0])
+        p_end = pd.Timestamp(group["planned_end"].iloc[0])
+        channel = group["channel"].iloc[0]
+
+        if p_end < p_start:
+            issues.append(
+                {
+                    "campaign_id": campaign_id,
+                    "campaign_name": campaign_name,
+                    "campaign_source": campaign_source,
+                    "channel": channel,
+                    "item_id": "N/A",
+                    "product_name": "Campaign-level",
+                    "issue_type": "End date before start date",
+                    "severity": "Critical",
+                    "plan_value": f"Start: {p_start.date()}, End: {p_end.date()}",
+                    "system_value": "N/A",
+                    "risk": "Campaign window is inverted, impossible to execute",
+                    "owner": "Campaign Owner",
+                    "action": "Correct campaign dates in plan",
+                    "date_window": f"{p_start.date()} - {p_end.date()}",
+                    "issue_origin": "Plan issue",
+                }
+            )
+
+        seen_items = {}
+        for _, row in group.iterrows():
+            item_id = row["item_id"]
+            planned_price = row["planned_price"]
+            planned_category = row["planned_category"]
+            planned_owner = row["planned_owner"]
+
+            if not item_id or str(item_id).strip() == "":
+                issues.append(
+                    {
+                        "campaign_id": campaign_id,
+                        "campaign_name": campaign_name,
+                        "campaign_source": campaign_source,
+                        "channel": channel,
+                        "item_id": "MISSING",
+                        "product_name": "Unknown",
+                        "issue_type": "Missing SKU in plan",
+                        "severity": "Critical",
+                        "plan_value": "No item ID provided",
+                        "system_value": "N/A",
+                        "risk": "Untrackable campaign line, cannot verify readiness",
+                        "owner": planned_owner or "Unassigned",
+                        "action": "Add valid SKU or remove line from plan",
+                        "date_window": f"{p_start.date()} - {p_end.date()}",
+                        "issue_origin": "Plan issue",
+                    }
+                )
+                continue
+
+            if item_id in seen_items:
+                issues.append(
+                    {
+                        "campaign_id": campaign_id,
+                        "campaign_name": campaign_name,
+                        "campaign_source": campaign_source,
+                        "channel": channel,
+                        "item_id": item_id,
+                        "product_name": "Duplicate entry",
+                        "issue_type": "Duplicate campaign item",
+                        "severity": "Warning",
+                        "plan_value": f"Appears {seen_items[item_id] + 1} times in plan",
+                        "system_value": "N/A",
+                        "risk": "Conflicting or double-counted campaign line",
+                        "owner": planned_owner or "Unassigned",
+                        "action": "Deduplicate campaign plan entries",
+                        "date_window": f"{p_start.date()} - {p_end.date()}",
+                        "issue_origin": "Plan issue",
+                    }
+                )
+            seen_items[item_id] = seen_items.get(item_id, 0) + 1
+
+            if planned_price is None or planned_price == 0:
+                issues.append(
+                    {
+                        "campaign_id": campaign_id,
+                        "campaign_name": campaign_name,
+                        "campaign_source": campaign_source,
+                        "channel": channel,
+                        "item_id": item_id,
+                        "product_name": "Plan entry",
+                        "issue_type": "Missing or zero price in plan",
+                        "severity": "Critical",
+                        "plan_value": f"Price: {planned_price}",
+                        "system_value": "N/A",
+                        "risk": "Cannot validate pricing, possible revenue loss",
+                        "owner": planned_owner or "Unassigned",
+                        "action": "Set valid campaign price in plan",
+                        "date_window": f"{p_start.date()} - {p_end.date()}",
+                        "issue_origin": "Plan issue",
+                    }
+                )
+
+            if not planned_owner or str(planned_owner).strip() == "":
+                issues.append(
+                    {
+                        "campaign_id": campaign_id,
+                        "campaign_name": campaign_name,
+                        "campaign_source": campaign_source,
+                        "channel": channel,
+                        "item_id": item_id,
+                        "product_name": "Plan entry",
+                        "issue_type": "Missing owner in plan",
+                        "severity": "Warning",
+                        "plan_value": "No owner assigned",
+                        "system_value": "N/A",
+                        "risk": "No one accountable for this campaign item",
+                        "owner": "Unassigned",
+                        "action": "Assign owner in campaign plan",
+                        "date_window": f"{p_start.date()} - {p_end.date()}",
+                        "issue_origin": "Plan issue",
+                    }
+                )
+
+            if planned_category and str(planned_category).strip() == "":
+                issues.append(
+                    {
+                        "campaign_id": campaign_id,
+                        "campaign_name": campaign_name,
+                        "campaign_source": campaign_source,
+                        "channel": channel,
+                        "item_id": item_id,
+                        "product_name": "Plan entry",
+                        "issue_type": "Missing category in plan",
+                        "severity": "Warning",
+                        "plan_value": "No category assigned",
+                        "system_value": "N/A",
+                        "risk": "Item may appear in wrong navigation or campaign section",
+                        "owner": planned_owner or "Unassigned",
+                        "action": "Assign category in campaign plan",
+                        "date_window": f"{p_start.date()} - {p_end.date()}",
+                        "issue_origin": "Plan issue",
+                    }
+                )
+
+    return issues
+
+
 def compare_plan_vs_system(plan: pd.DataFrame, system: pd.DataFrame) -> list[dict]:
     exceptions = []
     today = pd.Timestamp(ANCHOR)
@@ -601,6 +748,7 @@ def compare_plan_vs_system(plan: pd.DataFrame, system: pd.DataFrame) -> list[dic
                         "owner": planned_owner or "Unassigned",
                         "action": "Create item in system or remove from campaign plan",
                         "date_window": f"{p_start.date()} - {p_end.date()}",
+                        "issue_origin": "System issue",
                     }
                 )
                 continue
@@ -624,6 +772,7 @@ def compare_plan_vs_system(plan: pd.DataFrame, system: pd.DataFrame) -> list[dic
                         or "Unassigned",
                         "action": "Add item to target channel or reassign campaign",
                         "date_window": f"{p_start.date()} - {p_end.date()}",
+                        "issue_origin": "System issue",
                     }
                 )
                 continue
@@ -650,6 +799,7 @@ def compare_plan_vs_system(plan: pd.DataFrame, system: pd.DataFrame) -> list[dic
                         "owner": planned_owner or sys_owner or "Unassigned",
                         "action": "Resolve duplicate pricing, keep one active record",
                         "date_window": f"{p_start.date()} - {p_end.date()}",
+                        "issue_origin": "System issue",
                     }
                 )
             if pd.isna(price_s) or sys_price == 0:
@@ -669,6 +819,7 @@ def compare_plan_vs_system(plan: pd.DataFrame, system: pd.DataFrame) -> list[dic
                         "owner": planned_owner or sys_owner or "Unassigned",
                         "action": "Create price record / exclude item / mark reviewed",
                         "date_window": f"{p_start.date()} - {p_end.date()}",
+                        "issue_origin": "System issue",
                     }
                 )
                 continue
@@ -689,6 +840,7 @@ def compare_plan_vs_system(plan: pd.DataFrame, system: pd.DataFrame) -> list[dic
                         "owner": planned_owner or sys_owner or "Unassigned",
                         "action": "Align system price with campaign plan or update plan",
                         "date_window": f"{p_start.date()} - {p_end.date()}",
+                        "issue_origin": "Cross-system mismatch",
                     }
                 )
             if pd.notna(price_s) and price_s > p_start:
@@ -708,6 +860,7 @@ def compare_plan_vs_system(plan: pd.DataFrame, system: pd.DataFrame) -> list[dic
                         "owner": planned_owner or sys_owner or "Unassigned",
                         "action": "Fix start date / accept exception",
                         "date_window": f"{p_start.date()} - {p_end.date()}",
+                        "issue_origin": "Cross-system mismatch",
                     }
                 )
             if pd.notna(price_e) and price_e < p_end:
@@ -727,6 +880,7 @@ def compare_plan_vs_system(plan: pd.DataFrame, system: pd.DataFrame) -> list[dic
                         "owner": planned_owner or sys_owner or "Unassigned",
                         "action": "Extend price validity to match campaign end",
                         "date_window": f"{p_start.date()} - {p_end.date()}",
+                        "issue_origin": "Cross-system mismatch",
                     }
                 )
             if planned_category and sys_row["master_category"] != planned_category:
@@ -746,6 +900,7 @@ def compare_plan_vs_system(plan: pd.DataFrame, system: pd.DataFrame) -> list[dic
                         "owner": planned_owner or sys_owner or "Unassigned",
                         "action": "Update master category or campaign placement",
                         "date_window": f"{p_start.date()} - {p_end.date()}",
+                        "issue_origin": "Cross-system mismatch",
                     }
                 )
             if channel == "webshop":
@@ -766,6 +921,7 @@ def compare_plan_vs_system(plan: pd.DataFrame, system: pd.DataFrame) -> list[dic
                             "owner": planned_owner or sys_owner or "Unassigned",
                             "action": "Enable webshop visibility flag",
                             "date_window": f"{p_start.date()} - {p_end.date()}",
+                            "issue_origin": "System issue",
                         }
                     )
                 if not sys_row["image_ready"] or not sys_row["content_ready"]:
@@ -790,6 +946,7 @@ def compare_plan_vs_system(plan: pd.DataFrame, system: pd.DataFrame) -> list[dic
                             "owner": planned_owner or sys_owner or "Unassigned",
                             "action": "Upload missing assets before campaign start",
                             "date_window": f"{p_start.date()} - {p_end.date()}",
+                            "issue_origin": "System issue",
                         }
                     )
             stock = sys_row["stock_on_hand"]
@@ -811,6 +968,7 @@ def compare_plan_vs_system(plan: pd.DataFrame, system: pd.DataFrame) -> list[dic
                         "owner": planned_owner or sys_owner or "Unassigned",
                         "action": "Replenish stock / adjust forecast / reduce campaign scope",
                         "date_window": f"{p_start.date()} - {p_end.date()}",
+                        "issue_origin": "System issue",
                     }
                 )
             if not planned_owner and not sys_owner:
@@ -830,6 +988,7 @@ def compare_plan_vs_system(plan: pd.DataFrame, system: pd.DataFrame) -> list[dic
                         "owner": "Unassigned",
                         "action": "Assign owner in plan or system",
                         "date_window": f"{p_start.date()} - {p_end.date()}",
+                        "issue_origin": "Cross-system mismatch",
                     }
                 )
     system_active = system[system["price_start"].notna() & (system["system_price"] > 0)]
@@ -855,6 +1014,7 @@ def compare_plan_vs_system(plan: pd.DataFrame, system: pd.DataFrame) -> list[dic
                         "owner": srow["owner"] or "Unassigned",
                         "action": "Add to plan / remove price / investigate",
                         "date_window": f"{s_start.date()} - {s_end.date()}",
+                        "issue_origin": "Inferred/unplanned activity",
                     }
                 )
     return exceptions
@@ -933,12 +1093,24 @@ def render_kpi_cards(plan: pd.DataFrame, exceptions: list[dict]):
     st.markdown(html, unsafe_allow_html=True)
 
 
-def render_campaign_list(campaigns_df: pd.DataFrame):
-    st.subheader("Campaigns")
+def render_campaign_select(
+    campaigns_df: pd.DataFrame,
+    plan: pd.DataFrame,
+    plan_issues: list[dict],
+    selected_id: str | None,
+):
+    st.markdown(
+        '<div class="landing-hero"><h1>Which campaign are we reviewing?</h1><div class="subtitle">Select a campaign to assess readiness, spot mismatches, and prepare the handoff.</div></div>',
+        unsafe_allow_html=True,
+    )
+    st.markdown('<div class="campaign-select-grid">', unsafe_allow_html=True)
     for _, row in campaigns_df.iterrows():
+        cid = row["campaign_id"]
         pct = int(row.get("readiness_pct", 0))
         crit = int(row.get("critical_count", 0))
         warn = int(row.get("warning_count", 0))
+        pq_count = sum(1 for i in plan_issues if i["campaign_id"] == cid)
+        selected_class = " selected" if cid == selected_id else ""
         status_color = (
             "#059669"
             if crit == 0 and warn == 0
@@ -949,23 +1121,351 @@ def render_campaign_list(campaigns_df: pd.DataFrame):
             if crit == 0 and warn == 0
             else ("Critical" if crit > 0 else "Warning")
         )
-        col1, col2, col3, col4, col5 = st.columns([3, 1.5, 1.5, 1, 1])
-        with col1:
-            st.markdown(f"**{row['campaign_name']}**")
-            st.caption(f"{row['campaign_source']} . {row['channel']}")
-        with col2:
-            st.caption(f"{row['planned_start']} - {row['planned_end']}")
-        with col3:
-            st.metric("Items", row["item_count"])
-        with col4:
-            st.metric("Readiness", f"{pct}%")
-        with col5:
-            st.markdown(
-                f"<span style='color:{status_color};font-weight:600'>{status_label}</span> "
-                f"<span style='font-size:0.8em'>({crit}c/{warn}w)</span>",
-                unsafe_allow_html=True,
+        html = f"""
+        <div class="campaign-select-card{selected_class}" id="campaign-{cid}">
+          <div class="cs-name">{row['campaign_name']}</div>
+          <div class="cs-meta">{row['campaign_source']} &middot; {row['channel']} &middot; {str(row['planned_start'])[:10]} &ndash; {str(row['planned_end'])[:10]}</div>
+          <div class="cs-stats">
+            <div class="cs-stat"><span class="cs-dot ok"></span> {int(row.get('ready_items', 0))} ready</div>
+            <div class="cs-stat"><span class="cs-dot crit"></span> {crit} critical</div>
+            <div class="cs-stat"><span class="cs-dot warn"></span> {warn} warning</div>
+            <div class="cs-stat" style="color:{status_color};font-weight:600">{pct}% {status_label}</div>
+          </div>
+        </div>
+        """
+        st.markdown(html, unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
+
+
+def render_campaign_hero(
+    campaign_row, plan: pd.DataFrame, exceptions: list[dict], plan_issues: list[dict]
+):
+    cid = campaign_row["campaign_id"]
+    c_exc = [e for e in exceptions if e["campaign_id"] == cid]
+    c_pq = [i for i in plan_issues if i["campaign_id"] == cid]
+    total = int(campaign_row["item_count"])
+    crit = int(campaign_row.get("critical_count", 0))
+    warn = int(campaign_row.get("warning_count", 0))
+    ready = int(campaign_row.get("ready_items", 0))
+    pct = int(campaign_row.get("readiness_pct", 0))
+    p_start = str(campaign_row["planned_start"])[:10]
+    p_end = str(campaign_row["planned_end"])[:10]
+    days_left = (
+        pd.Timestamp(campaign_row["planned_start"]) - pd.Timestamp(ANCHOR)
+    ).days
+    days_label = (
+        f"{days_left}d until start"
+        if days_left > 0
+        else (
+            "Active now"
+            if days_left <= 0
+            and pd.Timestamp(ANCHOR) <= pd.Timestamp(campaign_row["planned_end"])
+            else "Ended"
+        )
+    )
+    html = f"""
+    <div class="campaign-hero">
+      <h2>{campaign_row['campaign_name']}</h2>
+      <div class="hero-meta">
+        <span>{campaign_row['campaign_source']}</span>
+        <span>{campaign_row['channel']}</span>
+        <span>{p_start} &ndash; {p_end}</span>
+        <span>{days_label}</span>
+        <span>{total} items</span>
+      </div>
+      <div class="readiness-bar-wrap">
+        <div class="readiness-bar-outer">
+          <div class="readiness-bar-ok" style="width:{max(ready/total*100, 0):.0f}%"></div>
+          <div class="readiness-bar-warn" style="width:{max(warn/total*100, 0):.0f}%"></div>
+          <div class="readiness-bar-crit" style="width:{max(crit/total*100, 0):.0f}%"></div>
+        </div>
+        <div class="readiness-legend">
+          <span style="color:var(--green)">&#9679; {ready} ready</span>
+          <span style="color:var(--amber)">&#9679; {warn} warnings</span>
+          <span style="color:var(--red)">&#9679; {crit} critical</span>
+          <span style="color:var(--ink-3)">{pct}% readiness</span>
+        </div>
+      </div>
+    </div>
+    """
+    st.markdown(html, unsafe_allow_html=True)
+
+
+def render_timeline_view(
+    plan: pd.DataFrame, system: pd.DataFrame, exceptions: list[dict], campaign_id: str
+):
+    camp_plan = plan[plan["campaign_id"] == campaign_id]
+    if camp_plan.empty:
+        return
+
+    p_start = pd.Timestamp(camp_plan["planned_start"].iloc[0])
+    p_end = pd.Timestamp(camp_plan["planned_end"].iloc[0])
+    channel = camp_plan["channel"].iloc[0]
+
+    timeline_start = p_start - timedelta(days=2)
+    timeline_end = p_end + timedelta(days=2)
+    total_days = (timeline_end - timeline_start).days
+    if total_days <= 0:
+        total_days = 1
+
+    def date_to_pct(d):
+        if pd.isna(d) or d is None:
+            return None
+        return max(
+            0, min(100, (pd.Timestamp(d) - timeline_start).days / total_days * 100)
+        )
+
+    def pct_width(s, e):
+        if pd.isna(s) or pd.isna(e) or s is None or e is None:
+            return 0
+        return max(
+            0, min(100, (pd.Timestamp(e) - pd.Timestamp(s)).days / total_days * 100)
+        )
+
+    c_exc = [e for e in exceptions if e["campaign_id"] == campaign_id]
+    exc_by_item = {}
+    for e in c_exc:
+        exc_by_item.setdefault(e["item_id"], []).append(e)
+
+    timeline_rows = []
+    for _, row in camp_plan.iterrows():
+        item_id = row["item_id"]
+        planned_price = row["planned_price"]
+        sys_rows = system[
+            (system["item_id"] == item_id) & (system["system_channel"] == channel)
+        ]
+        sys_row = sys_rows.iloc[0] if not sys_rows.empty else None
+        product_name = sys_row["product_name"] if sys_row is not None else "Unknown"
+        item_exc = exc_by_item.get(item_id, [])
+
+        crit_count = sum(1 for e in item_exc if e["severity"] == "Critical")
+        warn_count = sum(1 for e in item_exc if e["severity"] == "Warning")
+        severity = (
+            "Critical" if crit_count > 0 else ("Warning" if warn_count > 0 else "OK")
+        )
+
+        price_s = sys_row["price_start"] if sys_row is not None else None
+        price_e = sys_row["price_end"] if sys_row is not None else None
+        sys_price = sys_row["system_price"] if sys_row is not None else 0
+        sys_visible = sys_row["webshop_visible"] if sys_row is not None else False
+        stock = sys_row["stock_on_hand"] if sys_row is not None else 0
+        forecast = sys_row["forecast_demand"] if sys_row is not None else 0
+        stock_risk = sys_row["stock_risk"] if sys_row is not None else "N/A"
+        image_ready = sys_row["image_ready"] if sys_row is not None else False
+        content_ready = sys_row["content_ready"] if sys_row is not None else False
+        product_exists = sys_row["product_exists"] if sys_row is not None else False
+
+        price_status = "ok"
+        if not product_exists or sys_row is None:
+            price_status = "crit"
+        elif pd.isna(price_s) or sys_price == 0:
+            price_status = "crit"
+        elif pd.notna(price_s) and price_s > p_start:
+            price_status = "warn"
+        elif pd.notna(price_e) and price_e < p_end:
+            price_status = "warn"
+        elif abs(sys_price - planned_price) > planned_price * 0.01:
+            price_status = "warn"
+
+        vis_status = "ok"
+        if channel == "webshop":
+            if not product_exists or sys_row is None:
+                vis_status = "crit"
+            elif not sys_visible:
+                vis_status = "crit"
+            elif pd.notna(price_s) and price_s > p_start:
+                vis_status = "warn"
+            elif pd.notna(price_e) and price_e < p_end:
+                vis_status = "warn"
+
+        stock_status = "ok"
+        if not product_exists or sys_row is None:
+            stock_status = "crit"
+        elif stock_risk == "high":
+            stock_status = "crit"
+        elif stock_risk == "medium":
+            stock_status = "warn"
+        elif stock < forecast:
+            stock_status = "warn"
+
+        timeline_rows.append(
+            {
+                "item_id": item_id,
+                "product_name": product_name,
+                "severity": severity,
+                "planned_start": p_start,
+                "planned_end": p_end,
+                "price_start": price_s,
+                "price_end": price_e,
+                "sys_price": sys_price,
+                "price_status": price_status,
+                "vis_status": vis_status,
+                "sys_visible": sys_visible,
+                "stock_on_hand": stock,
+                "forecast_demand": forecast,
+                "stock_risk": stock_risk,
+                "stock_status": stock_status,
+                "image_ready": image_ready,
+                "content_ready": content_ready,
+                "product_exists": product_exists,
+                "issues": item_exc,
+            }
+        )
+
+    severity_order = {"Critical": 0, "Warning": 1, "OK": 2}
+    timeline_rows.sort(
+        key=lambda r: (severity_order.get(r["severity"], 3), r["item_id"])
+    )
+
+    st.subheader("Timeline View")
+    st.markdown(
+        '<div class="timeline-intro">Timeline view shows whether system setup covers '
+        "the planned campaign period. Short, shifted or missing system lines indicate "
+        "readiness gaps.</div>",
+        unsafe_allow_html=True,
+    )
+
+    plan_left = date_to_pct(p_start)
+    plan_w = pct_width(p_start, p_end)
+    today_pct = date_to_pct(ANCHOR)
+
+    for tr in timeline_rows:
+        sev = tr["severity"]
+        sev_color = SEVERITY_COLORS.get(sev, "#6B7280")
+        card_class = (
+            "crit" if sev == "Critical" else ("warn" if sev == "Warning" else "ok")
+        )
+
+        price_left = date_to_pct(tr["price_start"])
+        price_w = pct_width(tr["price_start"], tr["price_end"])
+        price_bar_class = f"timeline-bar-price-{tr['price_status']}"
+
+        vis_left = date_to_pct(tr["price_start"])
+        vis_w = pct_width(tr["price_start"], tr["price_end"])
+        vis_bar_class = f"timeline-bar-vis-{tr['vis_status']}"
+
+        stock_pct = (
+            min(100, (tr["stock_on_hand"] / tr["forecast_demand"] * 100))
+            if tr["forecast_demand"] > 0
+            else 100
+        )
+        stock_bar_class = f"timeline-bar-stock-{tr['stock_status']}"
+
+        price_html = ""
+        if tr["price_status"] == "crit" or price_left is None:
+            price_html = (
+                '<div class="timeline-bar timeline-bar-missing" '
+                'style="left:0%;width:100%"></div>'
+                '<span class="timeline-missing-label">[missing]</span>'
             )
-        st.divider()
+        else:
+            price_html = (
+                f'<div class="timeline-bar {price_bar_class}" '
+                f'style="left:{price_left}%;width:{price_w}%"></div>'
+            )
+
+        vis_html = ""
+        if tr["vis_status"] == "crit":
+            vis_html = (
+                '<div class="timeline-bar timeline-bar-missing" '
+                'style="left:0%;width:100%"></div>'
+                '<span class="timeline-missing-label">[hidden]</span>'
+            )
+        elif tr["vis_status"] == "warn":
+            vis_html = (
+                f'<div class="timeline-bar {vis_bar_class}" '
+                f'style="left:{vis_left}%;width:{vis_w}%"></div>'
+            )
+        else:
+            vis_html = (
+                f'<div class="timeline-bar {vis_bar_class}" '
+                f'style="left:{vis_left}%;width:{vis_w}%"></div>'
+            )
+
+        stock_html = (
+            f'<div class="timeline-bar {stock_bar_class}" '
+            f'style="left:0%;width:{stock_pct}%"></div>'
+        )
+
+        img_marker = (
+            '<span class="timeline-content-marker ready">image ready</span>'
+            if tr["image_ready"]
+            else '<span class="timeline-content-marker missing">image missing</span>'
+        )
+        ctn_marker = (
+            '<span class="timeline-content-marker ready">content ready</span>'
+            if tr["content_ready"]
+            else '<span class="timeline-content-marker missing">content missing</span>'
+        )
+
+        issue_tags_html = ""
+        if tr["issues"]:
+            tags = ""
+            for issue in tr["issues"]:
+                isev = issue["severity"].lower()[:4]
+                tags += (
+                    f'<span class="timeline-issue-tag {isev}">'
+                    f'{issue["issue_type"]}</span>'
+                )
+            issue_tags_html = f'<div class="timeline-issues-row">{tags}</div>'
+
+        html = f"""
+        <div class="timeline-card {card_class}">
+          <div class="timeline-header">
+            <span class="timeline-severity" style="background:{sev_color}">{sev}</span>
+            <span class="timeline-sku">{tr['item_id']}</span>
+            <span class="timeline-product">{tr['product_name']}</span>
+          </div>
+          <div class="timeline-lane">
+            <div class="timeline-lane-label">Campaign plan</div>
+            <div class="timeline-track">
+              <div class="timeline-bar timeline-bar-plan" style="left:{plan_left}%;width:{plan_w}%"></div>
+              <div class="timeline-marker" style="left:{today_pct}%"><div class="timeline-marker-label">Today</div></div>
+            </div>
+          </div>
+          <div class="timeline-lane">
+            <div class="timeline-lane-label">System price</div>
+            <div class="timeline-track">{price_html}</div>
+          </div>
+          <div class="timeline-lane">
+            <div class="timeline-lane-label">Visibility</div>
+            <div class="timeline-track">{vis_html}</div>
+          </div>
+          <div class="timeline-lane">
+            <div class="timeline-lane-label">Stock coverage</div>
+            <div class="timeline-track">
+              {stock_html}
+              <span style="position:absolute;right:4px;top:0;font-size:9px;font-family:var(--mono);color:var(--ink-3);line-height:16px">{tr['stock_on_hand']}/{tr['forecast_demand']} ({tr['stock_risk']})</span>
+            </div>
+          </div>
+          <div class="timeline-lane">
+            <div class="timeline-lane-label">Content</div>
+            <div class="timeline-content-markers">{img_marker} {ctn_marker}</div>
+          </div>
+          {issue_tags_html}
+          <div class="timeline-dates">
+            <span>{str(timeline_start)[:10]}</span><span>{str(timeline_end)[:10]}</span>
+          </div>
+        </div>
+        """
+        st.markdown(html, unsafe_allow_html=True)
+
+
+def render_plan_quality_cards(plan_issues: list[dict], campaign_id: str):
+    pq = [i for i in plan_issues if i["campaign_id"] == campaign_id]
+    if not pq:
+        return
+    st.subheader(f"Plan Quality Issues ({len(pq)})")
+    for issue in pq:
+        html = f"""
+        <div class="plan-quality-card">
+          <div class="pq-header">{issue['issue_type']}</div>
+          <div class="pq-detail"><strong>{issue['item_id']}</strong> &middot; {issue['product_name']} &middot; {issue['date_window']}</div>
+          <div class="pq-detail"><span class="exc-label">Risk</span> {issue['risk']}</div>
+          <div class="pq-action"><span class="exc-label">Action</span> {issue['action']}</div>
+        </div>
+        """
+        st.markdown(html, unsafe_allow_html=True)
 
 
 def render_exception_cards(exceptions: list[dict], view_mode: str):
@@ -973,7 +1473,22 @@ def render_exception_cards(exceptions: list[dict], view_mode: str):
         st.info("No exceptions found. All campaign items match system state.")
         return
     st.subheader(f"Exception Cards ({len(exceptions)})")
-    for exc in exceptions:
+    origin_map = {
+        "Plan issue": "origin-plan",
+        "System issue": "origin-system",
+        "Cross-system mismatch": "origin-cross",
+        "Inferred/unplanned activity": "origin-inferred",
+    }
+    st.markdown(
+        '<div class="issue-origin-legend">'
+        '<span class="origin-badge origin-plan">Plan issue</span>'
+        '<span class="origin-badge origin-system">System issue</span>'
+        '<span class="origin-badge origin-cross">Cross-system mismatch</span>'
+        '<span class="origin-badge origin-inferred">Inferred/unplanned</span>'
+        "</div>",
+        unsafe_allow_html=True,
+    )
+    for idx, exc in enumerate(exceptions):
         sev = exc["severity"]
         color = SEVERITY_COLORS.get(sev, "#6B7280")
         bg = {"Critical": "#FEF2F2", "Warning": "#FFFBEB", "OK": "#F0FDF4"}.get(
@@ -982,11 +1497,21 @@ def render_exception_cards(exceptions: list[dict], view_mode: str):
         border = {"Critical": "#FECACA", "Warning": "#FDE68A", "OK": "#BBF7D0"}.get(
             sev, "#E5E7EB"
         )
+        origin = exc.get("issue_origin", "")
+        origin_class = origin_map.get(origin, "")
+        origin_html = (
+            f'<span class="origin-badge {origin_class}">{origin}</span>'
+            if origin
+            else ""
+        )
+        decision_key = f"decision_{idx}"
+        current_decision = st.session_state.get(decision_key, "")
         html = f"""
         <div class="exception-card" style="border-left:4px solid {color}; background:{bg}; border:1px solid {border}">
           <div class="exc-header">
             <span class="exc-severity" style="background:{color}">{sev}</span>
             <span class="exc-type">{exc['issue_type']}</span>
+            {origin_html}
           </div>
           <div class="exc-body">
             <div class="exc-item"><strong>{exc['item_id']}</strong> / {exc['product_name']}</div>
@@ -1009,6 +1534,36 @@ def render_exception_cards(exceptions: list[dict], view_mode: str):
             """
         html += "</div></div>"
         st.markdown(html, unsafe_allow_html=True)
+        decision_options = [
+            "Fix before launch",
+            "Accept risk",
+            "Remove from campaign",
+            "Needs owner",
+            "Resolved",
+        ]
+        decision_classes = {
+            "Fix before launch": "fix",
+            "Accept risk": "accept",
+            "Remove from campaign": "remove",
+            "Needs owner": "owner",
+            "Resolved": "resolved",
+        }
+        cols = st.columns(len(decision_options))
+        for ci, opt in enumerate(decision_options):
+            dc = decision_classes[opt]
+            active_class = " active" if current_decision == opt else ""
+            with cols[ci]:
+                if st.button(
+                    opt, key=f"{decision_key}_{opt}", use_container_width=True
+                ):
+                    st.session_state[decision_key] = opt
+                    st.rerun()
+            if current_decision == opt:
+                st.markdown(
+                    f'<div style="text-align:center;font-family:var(--mono);font-size:10px;color:var(--green);margin-top:-8px">&#10003; Selected</div>',
+                    unsafe_allow_html=True,
+                )
+        st.markdown("<hr style='margin:8px 0;opacity:0.3'>", unsafe_allow_html=True)
 
 
 def render_handoff_payload(exceptions: list[dict], selected_campaign: str | None):
@@ -1089,23 +1644,21 @@ def main():
 
     plan = generate_campaign_plan()
     system = generate_system_truth()
+    plan_issues = check_plan_quality(plan)
     exceptions = compare_plan_vs_system(plan, system)
     campaigns_df = build_campaign_summary(plan, exceptions)
 
+    if "selected_campaign" not in st.session_state:
+        st.session_state.selected_campaign = None
+
     with st.sidebar:
+        st.markdown("### Navigation")
+        if st.button("&#8592; All Campaigns", use_container_width=True):
+            st.session_state.selected_campaign = None
+            st.rerun()
+        st.divider()
         st.markdown("### Filters")
         view_mode = st.radio("View mode", ["Business", "Technical"], horizontal=True)
-        selected_campaign = st.selectbox(
-            "Campaign",
-            ["All"] + campaigns_df["campaign_id"].tolist(),
-            format_func=lambda x: (
-                "All Campaigns"
-                if x == "All"
-                else campaigns_df[campaigns_df["campaign_id"] == x][
-                    "campaign_name"
-                ].iloc[0]
-            ),
-        )
         severity_filter = st.multiselect(
             "Severity",
             ["Critical", "Warning", "OK"],
@@ -1116,22 +1669,66 @@ def main():
             CHANNELS,
             default=CHANNELS,
         )
+        origin_filter = st.multiselect(
+            "Issue origin",
+            [
+                "Plan issue",
+                "System issue",
+                "Cross-system mismatch",
+                "Inferred/unplanned activity",
+            ],
+            default=[
+                "Plan issue",
+                "System issue",
+                "Cross-system mismatch",
+                "Inferred/unplanned activity",
+            ],
+        )
 
-    filtered = [
-        e
-        for e in exceptions
-        if e["severity"] in severity_filter and e["channel"] in channel_filter
-    ]
-    if selected_campaign != "All":
-        filtered = [e for e in filtered if e["campaign_id"] == selected_campaign]
-
-    render_kpi_cards(plan, exceptions)
-    st.divider()
-    render_campaign_list(campaigns_df)
-    st.divider()
-    render_exception_cards(filtered, view_mode)
-    st.divider()
-    render_handoff_payload(exceptions, selected_campaign)
+    if st.session_state.selected_campaign is None:
+        render_campaign_select(campaigns_df, plan, plan_issues, None)
+        campaign_ids = campaigns_df["campaign_id"].tolist()
+        cols = st.columns(len(campaign_ids))
+        for ci, cid in enumerate(campaign_ids):
+            with cols[ci]:
+                cname = campaigns_df[campaigns_df["campaign_id"] == cid][
+                    "campaign_name"
+                ].iloc[0]
+                if st.button(
+                    f"Review {cname}", key=f"select_{cid}", use_container_width=True
+                ):
+                    st.session_state.selected_campaign = cid
+                    st.rerun()
+        st.divider()
+        st.subheader("All Exceptions")
+        filtered = [
+            e
+            for e in exceptions
+            if e["severity"] in severity_filter
+            and e["channel"] in channel_filter
+            and e.get("issue_origin", "") in origin_filter
+        ]
+        render_exception_cards(filtered, view_mode)
+        st.divider()
+        render_handoff_payload(exceptions, "All")
+    else:
+        cid = st.session_state.selected_campaign
+        campaign_row = campaigns_df[campaigns_df["campaign_id"] == cid].iloc[0]
+        render_campaign_hero(campaign_row, plan, exceptions, plan_issues)
+        render_plan_quality_cards(plan_issues, cid)
+        render_timeline_view(plan, system, exceptions, cid)
+        st.divider()
+        filtered = [
+            e
+            for e in exceptions
+            if e["campaign_id"] == cid
+            and e["severity"] in severity_filter
+            and e["channel"] in channel_filter
+            and e.get("issue_origin", "") in origin_filter
+        ]
+        render_exception_cards(filtered, view_mode)
+        st.divider()
+        render_handoff_payload(exceptions, cid)
 
 
 if __name__ == "__main__":
