@@ -1321,7 +1321,21 @@ def render_timeline_view(
     st.markdown(
         '<div class="timeline-intro">Timeline view shows whether system setup covers '
         "the planned campaign period. Short, shifted or missing system lines indicate "
-        "readiness gaps.</div>",
+        "readiness gaps.</div>"
+        '<div class="timeline-legend">'
+        '<span class="timeline-legend-item">'
+        '<span class="timeline-legend-swatch" style="background:var(--ink-2);opacity:0.25"></span>'
+        "Campaign line = planned campaign window"
+        "</span>"
+        '<span class="timeline-legend-item">'
+        '<span class="timeline-legend-swatch" style="background:var(--teal)"></span>'
+        "System lines = configured coverage"
+        "</span>"
+        '<span class="timeline-legend-item">'
+        '<span class="timeline-legend-swatch" style="background:var(--red)"></span>'
+        "Short, shifted or missing lines = readiness gaps"
+        "</span>"
+        "</div>",
         unsafe_allow_html=True,
     )
 

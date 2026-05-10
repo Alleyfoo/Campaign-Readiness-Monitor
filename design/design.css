@@ -80,7 +80,10 @@
 .readiness-bar-crit { background: var(--red); height: 100%; }
 .readiness-legend { display: flex; gap: 16px; font-family: var(--mono); font-size: 10px; color: var(--ink-3); margin-top: 4px; }
 
-.timeline-intro { font-family: var(--sans); font-size: 13px; color: var(--ink-2); margin-bottom: 16px; line-height: 1.5; }
+.timeline-intro { font-family: var(--sans); font-size: 13px; color: var(--ink-2); margin-bottom: 10px; line-height: 1.5; }
+.timeline-legend { display: flex; gap: 18px; flex-wrap: wrap; margin-bottom: 16px; font-family: var(--mono); font-size: 10px; color: var(--ink-3); }
+.timeline-legend-item { display: flex; align-items: center; gap: 5px; }
+.timeline-legend-swatch { width: 20px; height: 8px; border-radius: 2px; display: inline-block; flex-shrink: 0; }
 .timeline-card { background: var(--paper); border: 1px solid var(--paper-3); border-radius: 8px; padding: 14px 16px; margin-bottom: 10px; }
 .timeline-card.crit { border-left: 4px solid var(--red); }
 .timeline-card.warn { border-left: 4px solid var(--amber); }
