@@ -23,7 +23,7 @@ All data is synthetic. The demo models two data sources:
 
 When no file is uploaded, the app uses the synthetic campaign plan. A basic uploader can also read `.xlsx` and `.csv` campaign plans and compare them against the mocked system truth data.
 
-Uploaded plans are fitted against the campaign plan schema before comparison. The Python schema lives in `campaign_schema.py`, and a machine-readable copy lives in `schemas/campaign_plan_schema.json`. The app also exposes downloadable schema and blank template CSV files in the upload panel.
+Uploaded plans are fitted against the campaign plan schema before comparison. The Python schema lives in `campaign_schema.py`, and a machine-readable copy lives in `schemas/campaign_plan_schema.json`. The app also exposes a downloadable schema CSV and an Excel template workbook in the upload panel.
 
 Recommended upload columns:
 

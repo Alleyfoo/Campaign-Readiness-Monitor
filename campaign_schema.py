@@ -214,7 +214,22 @@ def schema_as_dataframe() -> pd.DataFrame:
 
 def campaign_plan_template() -> pd.DataFrame:
     return pd.DataFrame(
-        columns=[field.recommended_header or field.name for field in CAMPAIGN_PLAN_SCHEMA]
+        [
+            {
+                "campaign_code": "CAMP-001",
+                "campaign_name": "Summer Launch",
+                "campaign_source": "Excel upload",
+                "start_date": "2026-06-01",
+                "end_date": "2026-06-14",
+                "channel": "webshop",
+                "product_sku": "SKU-001",
+                "product_price": 19.90,
+                "planned_category": "Summer Essentials",
+                "planned_visibility": True,
+                "planned_owner": "Alice (Campaigns)",
+            }
+        ],
+        columns=[field.recommended_header or field.name for field in CAMPAIGN_PLAN_SCHEMA],
     )
 
 

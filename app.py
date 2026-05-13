@@ -4,6 +4,7 @@ from datetime import date, timedelta
 import os
 import json
 from html import escape
+from io import BytesIO
 from campaign_schema import campaign_plan_template, normalize_campaign_plan, schema_as_dataframe
 
 
@@ -37,6 +38,14 @@ def read_campaign_plan_upload(uploaded_file) -> tuple[pd.DataFrame | None, dict,
     return plan, info, errors
 
 
+def build_template_workbook() -> bytes:
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        campaign_plan_template().to_excel(writer, sheet_name="campaign_plan", index=False)
+        schema_as_dataframe().to_excel(writer, sheet_name="schema", index=False)
+    return output.getvalue()
+
+
 def render_plan_input() -> tuple[pd.DataFrame, dict]:
     with st.expander("Data source - upload Excel/CSV", expanded=True):
         uploaded = st.file_uploader(
@@ -53,12 +62,11 @@ def render_plan_input() -> tuple[pd.DataFrame, dict]:
             mime="text/csv",
             use_container_width=True,
         )
-        template_df = campaign_plan_template()
         st.download_button(
-            "Download blank campaign plan template",
-            template_df.to_csv(index=False).encode("utf-8"),
-            file_name="campaign_plan_template.csv",
-            mime="text/csv",
+            "Download Excel campaign plan template",
+            build_template_workbook(),
+            file_name="campaign_plan_template.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True,
         )
         st.dataframe(schema_df, use_container_width=True, hide_index=True)
