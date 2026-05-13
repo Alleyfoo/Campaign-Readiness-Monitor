@@ -125,6 +125,14 @@ def render_import_status(info: dict, plan: pd.DataFrame) -> None:
     </section>
     """
     _md(html)
+    st.dataframe(upload_preview(plan), use_container_width=True, hide_index=True)
+    st.download_button(
+        "Download active campaign plan",
+        upload_preview(plan).to_csv(index=False).encode("utf-8"),
+        file_name="active_campaign_plan_preview.csv",
+        mime="text/csv",
+        use_container_width=True,
+    )
 
 
 def render_fix_first(exceptions: list[dict], plan: pd.DataFrame) -> None:
