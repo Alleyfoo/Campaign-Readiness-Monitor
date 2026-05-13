@@ -3,6 +3,8 @@ import streamlit as st
 from datetime import date, timedelta
 import os
 import json
+from html import escape
+from campaign_schema import campaign_plan_template, normalize_campaign_plan, schema_as_dataframe
 
 
 ANCHOR = date(2026, 6, 1)
@@ -13,6 +15,363 @@ from textwrap import dedent as _dedent
 def _md(html: str) -> None:
     cleaned = "\n".join(line.lstrip() for line in html.splitlines())
     getattr(st, "markdown")(cleaned.strip(), unsafe_allow_html=True)
+
+
+def read_campaign_plan_upload(uploaded_file) -> tuple[pd.DataFrame | None, dict, list[str]]:
+    name = uploaded_file.name
+    try:
+        if name.lower().endswith(".csv"):
+            raw = pd.read_csv(uploaded_file)
+        else:
+            raw = pd.read_excel(uploaded_file)
+    except Exception as exc:
+        return None, {"source": name, "mode": "Upload"}, [f"Could not read file: {exc}"]
+
+    plan, errors = normalize_campaign_plan(raw, default_source=name)
+    info = {
+        "source": name,
+        "mode": "Uploaded campaign plan",
+        "rows": len(raw),
+        "columns": len(raw.columns),
+    }
+    return plan, info, errors
+
+
+def render_plan_input() -> tuple[pd.DataFrame, dict]:
+    with st.expander("Data source", expanded=False):
+        schema_df = schema_as_dataframe()
+        st.caption("Campaign plan uploads are fitted against the schema below before comparison.")
+        st.dataframe(schema_df, use_container_width=True, hide_index=True)
+        st.download_button(
+            "Download campaign plan schema",
+            schema_df.to_csv(index=False).encode("utf-8"),
+            file_name="campaign_plan_schema.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+        template_df = campaign_plan_template()
+        st.download_button(
+            "Download blank campaign plan template",
+            template_df.to_csv(index=False).encode("utf-8"),
+            file_name="campaign_plan_template.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+        uploaded = st.file_uploader(
+            "Upload campaign plan",
+            type=["xlsx", "csv"],
+            help="Upload an Excel or CSV campaign plan. If no file is uploaded, the synthetic demo plan is used.",
+        )
+        if uploaded is None:
+            plan = generate_campaign_plan()
+            info = {
+                "source": "Synthetic demo data",
+                "mode": "Demo mode",
+                "rows": len(plan),
+                "columns": len(plan.columns),
+            }
+            st.caption("Using synthetic demo data. Upload an Excel or CSV campaign plan to test the comparison flow.")
+            return plan, info
+
+        plan, info, errors = read_campaign_plan_upload(uploaded)
+        if errors:
+            st.error("The uploaded campaign plan needs fixes before it can be compared.")
+            st.dataframe(pd.DataFrame({"Import issue": errors}), use_container_width=True, hide_index=True)
+            st.caption(f"File: {info['source']}")
+            st.stop()
+
+        st.success(f"Loaded {info['rows']} rows from {info['source']}")
+        return plan, info
+
+
+def render_import_status(info: dict, plan: pd.DataFrame) -> None:
+    campaigns = plan["campaign_id"].nunique()
+    items = plan["item_id"].replace("", pd.NA).dropna().nunique()
+    html = f"""
+    <section class="section import-status">
+      <div class="section-head">
+        <div class="left">
+          <span class="eyebrow">00 — Data source</span>
+          <h2>{info['mode']} <span class="muted">· {info['source']}</span></h2>
+        </div>
+        <div class="right"><span>{info['rows']} rows · {campaigns} campaigns · {items} SKUs</span></div>
+      </div>
+    </section>
+    """
+    _md(html)
+
+
+def render_fix_first(exceptions: list[dict], plan: pd.DataFrame) -> None:
+    starts = campaign_start_lookup(plan)
+    counts = issue_counts_by_item(exceptions)
+    items = prioritized_exceptions(exceptions, plan, limit=5)
+
+    if not items:
+        html = """
+        <section class="section fix-first">
+          <div class="section-head">
+            <div class="left">
+              <span class="eyebrow">00 — Fix first</span>
+              <h2>No blocking exceptions <span class="muted">· ready to monitor</span></h2>
+            </div>
+          </div>
+        </section>
+        """
+        _md(html)
+        return
+
+    rows = []
+    for exc in items:
+        pressure = exception_launch_pressure(exc, starts)
+        related = counts.get((exc.get("campaign_id", ""), exc.get("item_id", "")), 1)
+        sev_cls = "crit" if exc.get("severity") == "Critical" else "warn"
+        pressure_cls = "today" if pressure["label"] == "Launch today" else ("soon" if pressure["label"] == "Starts soon" else "future")
+        rows.append(f"""
+        <article class="fix-row {sev_cls}">
+          <div class="fix-id">
+            <span class="sku">{escape(str(exc.get('item_id', '')))}</span>
+            <span class="count">{related} issue{'s' if related != 1 else ''}</span>
+          </div>
+          <div class="fix-main">
+            <div class="fix-title">{escape(str(exc.get('issue_type', '')))}</div>
+            <div class="fix-meta">
+              <span>{escape(str(exc.get('campaign_name', '')))}</span>
+              <span>{escape(str(exc.get('owner') or 'Unassigned'))}</span>
+            </div>
+          </div>
+          <div class="fix-pressure {pressure_cls}">
+            <span>{pressure['label']}</span>
+            <b>{pressure['text']}</b>
+          </div>
+          <div class="fix-action">{escape(str(exc.get('action', 'Review exception')))}</div>
+        </article>
+        """)
+
+    html = f"""
+    <section class="section fix-first">
+      <div class="section-head">
+        <div class="left">
+          <span class="eyebrow">00 — Fix first</span>
+          <h2>Highest pressure exceptions <span class="muted">· max 5</span></h2>
+        </div>
+        <div class="right"><span>severity · launch timing · issue count</span></div>
+      </div>
+      <div class="fix-list">{''.join(rows)}</div>
+    </section>
+    """
+    _md(html)
+
+
+def render_readiness_lane_matrix(campaigns_df: pd.DataFrame, exceptions: list[dict]) -> None:
+    lanes = list(LANE_CATEGORIES.keys())
+    header = "".join(f"<span>{escape(lane)}</span>" for lane in lanes)
+    rows = []
+    for _, campaign in campaigns_df.sort_values("planned_start").iterrows():
+        cid = campaign["campaign_id"]
+        cells = []
+        for lane in lanes:
+            status, count = lane_status_for(cid, lane, exceptions)
+            cls = status.lower()
+            label = status if count == 0 else f"{status} · {count}"
+            cells.append(f'<span class="lane-cell {cls}">{escape(label)}</span>')
+        pressure = launch_pressure_for_start(campaign["planned_start"])
+        rows.append(f"""
+        <div class="lane-row">
+          <div class="lane-campaign">
+            <span class="camp-id">{escape(str(cid))}</span>
+            <span class="camp-name">{escape(str(campaign['campaign_name']))}</span>
+            <span class="camp-pressure">{pressure['label']} · {pressure['text']}</span>
+          </div>
+          <div class="lane-cells">{''.join(cells)}</div>
+        </div>
+        """)
+
+    html = f"""
+    <section class="section readiness-lanes">
+      <div class="section-head">
+        <div class="left">
+          <span class="eyebrow">01 — Readiness lanes</span>
+          <h2>Campaign readiness matrix <span class="muted">· by operating lane</span></h2>
+        </div>
+      </div>
+      <div class="lane-matrix">
+        <div class="lane-header">
+          <span>Campaign</span>
+          <div class="lane-cells">{header}</div>
+        </div>
+        {''.join(rows)}
+      </div>
+    </section>
+    """
+    _md(html)
+
+
+def render_source_freshness(sources: list[dict]) -> None:
+    cards = []
+    for src in sources:
+        status = src["status"].lower()
+        cards.append(f"""
+        <article class="fresh-card {status}">
+          <div class="fresh-top">
+            <span class="fresh-name">{escape(src['source'])}</span>
+            <span class="fresh-status">{escape(src['status'])}</span>
+          </div>
+          <div class="fresh-time">{escape(src['checked'])}</div>
+          <div class="fresh-detail">{escape(src['detail'])}</div>
+        </article>
+        """)
+
+    html = f"""
+    <section class="section source-freshness">
+      <div class="section-head">
+        <div class="left">
+          <span class="eyebrow">02 — Source freshness</span>
+          <h2>Mock system checks <span class="muted">· no live integrations</span></h2>
+        </div>
+      </div>
+      <div class="fresh-grid">{''.join(cards)}</div>
+    </section>
+    """
+    _md(html)
+
+
+def build_excel_system_check(
+    plan: pd.DataFrame,
+    system: pd.DataFrame,
+    exceptions: list[dict],
+    focused_campaign_id: str,
+) -> pd.DataFrame:
+    scope_plan = plan if focused_campaign_id == "ALL" else plan[plan["campaign_id"] == focused_campaign_id]
+    rows = []
+
+    for _, plan_row in scope_plan.iterrows():
+        item_id = plan_row["item_id"]
+        channel = plan_row["channel"]
+        campaign_id = plan_row["campaign_id"]
+        item_exceptions = [
+            exc for exc in exceptions
+            if exc.get("campaign_id") == campaign_id and exc.get("item_id") == item_id
+        ]
+        severity = "OK"
+        if any(exc.get("severity") == "Critical" for exc in item_exceptions):
+            severity = "Critical"
+        elif any(exc.get("severity") == "Warning" for exc in item_exceptions):
+            severity = "Warning"
+
+        sys_rows = system[system["item_id"] == item_id]
+        sys_channel_rows = sys_rows[sys_rows["system_channel"] == channel]
+        if sys_rows.empty:
+            system_match = "Missing from system"
+            sys_row = None
+        elif sys_channel_rows.empty:
+            system_match = "Missing in channel"
+            sys_row = sys_rows.iloc[0]
+        else:
+            system_match = "Matched"
+            sys_row = sys_channel_rows.iloc[0]
+
+        rows.append(
+            {
+                "status": severity,
+                "match": system_match,
+                "campaign": plan_row["campaign_name"],
+                "item_id": item_id,
+                "channel": channel,
+                "excel_price": plan_row["planned_price"],
+                "system_price": None if sys_row is None else sys_row["system_price"],
+                "excel_window": f"{pd.Timestamp(plan_row['planned_start']).date()} - {pd.Timestamp(plan_row['planned_end']).date()}",
+                "system_window": "N/A" if sys_row is None or pd.isna(sys_row["price_start"]) else f"{pd.Timestamp(sys_row['price_start']).date()} - {pd.Timestamp(sys_row['price_end']).date()}",
+                "excel_category": plan_row.get("planned_category", ""),
+                "system_category": "" if sys_row is None else sys_row["master_category"],
+                "excel_owner": plan_row.get("planned_owner", "") or "Unassigned",
+                "system_owner": "" if sys_row is None else (sys_row["owner"] or "Unassigned"),
+                "issues": "; ".join(sorted({exc.get("issue_type", "") for exc in item_exceptions if exc.get("issue_type")})) or "None",
+            }
+        )
+
+    if focused_campaign_id == "ALL":
+        planned_ids = set(plan["item_id"].dropna().astype(str))
+        system_active = system[system["price_start"].notna() & (system["system_price"] > 0)]
+        for _, sys_row in system_active.iterrows():
+            item_id = str(sys_row["item_id"])
+            if item_id in planned_ids:
+                continue
+            rows.append(
+                {
+                    "status": "Warning",
+                    "match": "System only",
+                    "campaign": "Not in Excel plan",
+                    "item_id": item_id,
+                    "channel": sys_row["system_channel"],
+                    "excel_price": None,
+                    "system_price": sys_row["system_price"],
+                    "excel_window": "N/A",
+                    "system_window": f"{pd.Timestamp(sys_row['price_start']).date()} - {pd.Timestamp(sys_row['price_end']).date()}",
+                    "excel_category": "",
+                    "system_category": sys_row["master_category"],
+                    "excel_owner": "",
+                    "system_owner": sys_row["owner"] or "Unassigned",
+                    "issues": "System item active but missing from Excel plan",
+                }
+            )
+
+    check = pd.DataFrame(rows)
+    if check.empty:
+        return check
+    status_order = {"Critical": 0, "Warning": 1, "OK": 2}
+    check["_status_order"] = check["status"].map(status_order).fillna(9)
+    check = check.sort_values(["_status_order", "campaign", "item_id"]).drop(columns=["_status_order"])
+    return check
+
+
+def render_excel_system_check(
+    plan: pd.DataFrame,
+    system: pd.DataFrame,
+    exceptions: list[dict],
+    focused_campaign_id: str,
+) -> None:
+    check = build_excel_system_check(plan, system, exceptions, focused_campaign_id)
+    scope = "all campaigns" if focused_campaign_id == "ALL" else focused_campaign_id
+    issue_rows = 0 if check.empty else int((check["status"] != "OK").sum())
+    html = f"""
+    <section class="section excel-system-check">
+      <div class="section-head">
+        <div class="left">
+          <span class="eyebrow">03 — Excel vs system</span>
+          <h2>Plan row check <span class="muted">· {scope}</span></h2>
+        </div>
+        <div class="right"><span>{len(check)} rows · {issue_rows} need review</span></div>
+      </div>
+    </section>
+    """
+    _md(html)
+
+    if check.empty:
+        st.info("No campaign plan rows available for this selection.")
+        return
+
+    st.dataframe(
+        check,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "status": st.column_config.TextColumn("Status", width="small"),
+            "match": st.column_config.TextColumn("Match", width="small"),
+            "campaign": st.column_config.TextColumn("Campaign", width="medium"),
+            "item_id": st.column_config.TextColumn("SKU", width="small"),
+            "channel": st.column_config.TextColumn("Channel", width="small"),
+            "excel_price": st.column_config.NumberColumn("Excel price", format="%.2f"),
+            "system_price": st.column_config.NumberColumn("System price", format="%.2f"),
+            "issues": st.column_config.TextColumn("Issues", width="large"),
+        },
+    )
+    st.download_button(
+        "Download Excel vs system check",
+        check.to_csv(index=False).encode("utf-8"),
+        file_name=f"excel_vs_system_check_{focused_campaign_id.lower()}.csv",
+        mime="text/csv",
+        use_container_width=True,
+    )
 
 
 SEVERITY_COLORS = {"Critical": "#DC2626", "Warning": "#D97706", "OK": "#059669"}
@@ -685,7 +1044,7 @@ def check_plan_quality(plan: pd.DataFrame) -> list[dict]:
                 )
             seen_items[item_id] = seen_items.get(item_id, 0) + 1
 
-            if planned_price is None or planned_price == 0:
+            if pd.isna(planned_price) or planned_price == 0:
                 issues.append(
                     {
                         "campaign_id": campaign_id,
@@ -727,7 +1086,7 @@ def check_plan_quality(plan: pd.DataFrame) -> list[dict]:
                     }
                 )
 
-            if planned_category and str(planned_category).strip() == "":
+            if pd.isna(planned_category) or str(planned_category).strip() == "":
                 issues.append(
                     {
                         "campaign_id": campaign_id,
@@ -1107,6 +1466,105 @@ CAMPAIGN_SOURCE_SHORT = {
     "Email attachment": "Email",
     "System detected": "System",
 }
+
+
+LANE_CATEGORIES = {
+    "Plan": ("plan",),
+    "PIM": ("pim",),
+    "Price": ("price",),
+    "Channel": ("channel",),
+    "Content": ("content",),
+    "Stock": ("stock",),
+    "Owner": ("owner",),
+}
+
+
+def campaign_start_lookup(plan: pd.DataFrame) -> dict[str, pd.Timestamp]:
+    return {
+        cid: pd.Timestamp(group["planned_start"].iloc[0])
+        for cid, group in plan.groupby("campaign_id")
+    }
+
+
+def launch_pressure_for_start(start: pd.Timestamp | date | None) -> dict:
+    if start is None or pd.isna(start):
+        return {"days_until_start": 9999, "label": "Future", "text": "date missing"}
+    start_ts = pd.Timestamp(start)
+    days = int((start_ts.normalize() - pd.Timestamp(ANCHOR)).days)
+    if days <= 0:
+        label = "Launch today"
+        text = "live now" if days < 0 else "today"
+    elif days <= 7:
+        label = "Starts soon"
+        text = f"{days}d to launch"
+    else:
+        label = "Future"
+        text = f"{days}d out"
+    return {"days_until_start": days, "label": label, "text": text}
+
+
+def exception_launch_pressure(exc: dict, starts: dict[str, pd.Timestamp]) -> dict:
+    start = starts.get(exc.get("campaign_id"))
+    if start is None:
+        start = _resolve_date(exc.get("date_window", ""))
+    return launch_pressure_for_start(start)
+
+
+def issue_counts_by_item(exceptions: list[dict]) -> dict[tuple[str, str], int]:
+    counts: dict[tuple[str, str], int] = {}
+    for exc in exceptions:
+        item_id = exc.get("item_id")
+        if item_id in ("MISSING", "N/A", None, ""):
+            continue
+        key = (exc.get("campaign_id", ""), item_id)
+        counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
+def prioritized_exceptions(exceptions: list[dict], plan: pd.DataFrame, limit: int = 5) -> list[dict]:
+    starts = campaign_start_lookup(plan)
+    counts = issue_counts_by_item(exceptions)
+    rows = [
+        exc for exc in exceptions
+        if exc.get("item_id") not in ("MISSING", "N/A", None, "")
+    ]
+
+    def _sort_key(exc: dict) -> tuple:
+        pressure = exception_launch_pressure(exc, starts)
+        issue_count = counts.get((exc.get("campaign_id", ""), exc.get("item_id", "")), 1)
+        days = max(pressure["days_until_start"], 0)
+        return (
+            SEVERITY_ORDER.get(exc.get("severity"), 9),
+            days,
+            -issue_count,
+            exc.get("campaign_name", ""),
+            exc.get("item_id", ""),
+        )
+
+    return sorted(rows, key=_sort_key)[:limit]
+
+
+def lane_status_for(campaign_id: str, lane: str, exceptions: list[dict]) -> tuple[str, int]:
+    cats = set(LANE_CATEGORIES[lane])
+    lane_exceptions = [
+        exc for exc in exceptions
+        if exc.get("campaign_id") == campaign_id and exc.get("issue_category") in cats
+    ]
+    if not lane_exceptions:
+        return "OK", 0
+    if any(exc.get("severity") == "Critical" for exc in lane_exceptions):
+        return "Critical", len(lane_exceptions)
+    return "Warning", len(lane_exceptions)
+
+
+def generate_source_freshness() -> list[dict]:
+    return [
+        {"source": "Campaign plan", "checked": "Jun 01, 08:45", "status": "Fresh", "detail": "latest upload loaded"},
+        {"source": "PIM / product", "checked": "Jun 01, 08:30", "status": "Fresh", "detail": "product master snapshot"},
+        {"source": "Pricing", "checked": "May 31, 16:10", "status": "Stale", "detail": "overnight price export pending"},
+        {"source": "Inventory", "checked": "Jun 01, 07:55", "status": "Partial", "detail": "2 channels refreshed"},
+        {"source": "Channel / web visibility", "checked": "not checked", "status": "Missing", "detail": "visibility feed unavailable"},
+    ]
 
 
 def _campaign_slug(name: str) -> str:
@@ -1962,7 +2420,7 @@ def render_exception_rail(exceptions: list[dict], focus_item: str | None):
     html = f"""
     <div class="exc-rail-wrap">
       <div class="exc-rail-head">
-        <span class="lbl">All remaining · scroll for the full queue</span>
+        <span class="lbl">Full matching queue</span>
         <span class="lbl"><b>{len(exceptions)}</b> total</span>
       </div>
       <div class="exc-rail">{''.join(minis)}</div>
@@ -2265,6 +2723,22 @@ TEAM_ETAS = {
 }
 
 
+def _handoff_payload(team_name: str, items: list[dict]) -> str:
+    lines = [f"{team_name} handoff payload", ""]
+    for exc in items:
+        lines.extend(
+            [
+                f"- {exc.get('item_id', '')} | {exc.get('campaign_name', exc.get('campaign_id', ''))}",
+                f"  Owner: {exc.get('owner') or 'Unassigned'}",
+                f"  Issue: {exc.get('issue_type', '')}",
+                f"  Risk: {exc.get('risk', '')}",
+                f"  Action: {exc.get('action', '')}",
+                "",
+            ]
+        )
+    return "\n".join(lines).strip()
+
+
 def render_handoff(exceptions: list[dict], focused_campaign_id: str):
     in_scope = [e for e in exceptions if (focused_campaign_id == "ALL") or (e["campaign_id"] == focused_campaign_id)]
     teams: dict[str, list[dict]] = {t: [] for t in ["Pricing", "Product Data", "Inventory", "E-commerce", "Campaign Owners"]}
@@ -2277,9 +2751,14 @@ def render_handoff(exceptions: list[dict], focused_campaign_id: str):
         sev_cls = "crit" if crit > 0 else ("warn" if items else "ok")
         unit = "items to<br>fix" if team_name != "Campaign Owners" else "decisions<br>needed"
         rows = []
-        for exc in items[:5]:
+        sorted_items = sorted(items, key=lambda e: (str(e.get("owner") or "Unassigned"), SEVERITY_ORDER.get(e.get("severity"), 9), str(e.get("item_id", ""))))
+        for exc in sorted_items[:5]:
             short_action = exc.get("action", "").split(" / ")[0]
-            rows.append(f"<li><span class=\"sku\">{exc['item_id']}</span><span>{short_action}</span></li>")
+            owner = (exc.get("owner") or "Unassigned").split(" (")[0]
+            rows.append(
+                f"<li><span class=\"sku\">{escape(str(exc['item_id']))}</span>"
+                f"<span><b>{escape(owner)}</b><em>{escape(short_action)}</em></span></li>"
+            )
         if not rows:
             rows.append('<li><span class="sku">—</span><span style="color:var(--ink-4)">no items</span></li>')
         more = ""
@@ -2311,6 +2790,21 @@ def render_handoff(exceptions: list[dict], focused_campaign_id: str):
     """
     _md(html)
 
+    active_teams = [(team, items) for team, items in teams.items() if items]
+    if active_teams:
+        with st.expander("Copyable handoff payloads", expanded=False):
+            for team_name, items in active_teams:
+                payload = _handoff_payload(
+                    team_name,
+                    sorted(items, key=lambda e: (SEVERITY_ORDER.get(e.get("severity"), 9), str(e.get("item_id", "")))),
+                )
+                st.text_area(
+                    f"{team_name} payload",
+                    payload,
+                    height=180,
+                    key=f"handoff_payload_{focused_campaign_id}_{team_name}",
+                )
+
 
 # ============= footer =============
 def render_footer(plan: pd.DataFrame):
@@ -2331,7 +2825,7 @@ def main():
     st.set_page_config(page_title="Campaign Readiness Monitor", layout="wide", initial_sidebar_state="collapsed")
     _md(load_design_css())
 
-    plan = generate_campaign_plan()
+    plan, import_info = render_plan_input()
     system = generate_system_truth()
     plan_issues = check_plan_quality(plan)
     exceptions = compare_plan_vs_system(plan, system)
@@ -2373,6 +2867,10 @@ def main():
         selected_slug = _campaign_slug(campaign_row["campaign_name"])
 
     view_mode = render_topbar(selected_slug, st.session_state.view_mode)
+    render_import_status(import_info, plan)
+    render_fix_first(all_issues, plan)
+    render_readiness_lane_matrix(campaigns_df, all_issues)
+    render_source_freshness(generate_source_freshness())
     if is_portfolio:
         render_inspector_all(plan, campaigns_df, all_issues)
     else:
@@ -2380,6 +2878,7 @@ def main():
     render_pipeline(plan, system, all_issues, selected_id)
     render_kpis(plan, all_issues, campaigns_df)
     render_campaign_cards(campaigns_df, selected_id)
+    render_excel_system_check(plan, system, all_issues, selected_id)
     render_exceptions_section(
         all_issues,
         plan,

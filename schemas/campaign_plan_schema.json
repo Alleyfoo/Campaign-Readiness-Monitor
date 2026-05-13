@@ -1,0 +1,100 @@
+{
+  "name": "campaign_plan",
+  "version": 1,
+  "description": "Schema for campaign Excel/CSV uploads before comparison against mocked system truth.",
+  "fields": [
+    {
+      "name": "campaign_id",
+      "label": "Campaign ID",
+      "type": "string",
+      "required": true,
+      "nullable": false,
+      "aliases": ["campaign", "campaign id", "campaign_id"]
+    },
+    {
+      "name": "campaign_name",
+      "label": "Campaign name",
+      "type": "string",
+      "required": true,
+      "nullable": false,
+      "aliases": ["campaign name", "campaign_name"]
+    },
+    {
+      "name": "campaign_source",
+      "label": "Campaign source",
+      "type": "string",
+      "required": false,
+      "nullable": true,
+      "default": "Uploaded file",
+      "aliases": ["source", "campaign source", "campaign_source"]
+    },
+    {
+      "name": "planned_start",
+      "label": "Planned start",
+      "type": "date",
+      "required": true,
+      "nullable": false,
+      "aliases": ["start", "start date", "planned start", "planned_start"]
+    },
+    {
+      "name": "planned_end",
+      "label": "Planned end",
+      "type": "date",
+      "required": true,
+      "nullable": false,
+      "aliases": ["end", "end date", "planned end", "planned_end"]
+    },
+    {
+      "name": "channel",
+      "label": "Channel",
+      "type": "channel",
+      "required": true,
+      "nullable": false,
+      "allowed_values": ["webshop", "B2B", "mail order", "local store"],
+      "aliases": ["channel"]
+    },
+    {
+      "name": "item_id",
+      "label": "Item ID",
+      "type": "string",
+      "required": true,
+      "nullable": true,
+      "aliases": ["sku", "item", "item id", "item_id", "product"]
+    },
+    {
+      "name": "planned_price",
+      "label": "Planned price",
+      "type": "number",
+      "required": true,
+      "nullable": true,
+      "aliases": ["planned price", "price", "planned_price"]
+    },
+    {
+      "name": "planned_category",
+      "label": "Planned category",
+      "type": "string",
+      "required": false,
+      "nullable": true,
+      "default": "",
+      "aliases": ["category", "planned category", "planned_category"]
+    },
+    {
+      "name": "planned_visibility",
+      "label": "Planned visibility",
+      "type": "boolean",
+      "required": false,
+      "nullable": true,
+      "default": true,
+      "aliases": ["visibility", "planned visibility", "planned_visibility"]
+    },
+    {
+      "name": "planned_owner",
+      "label": "Planned owner",
+      "type": "string",
+      "required": false,
+      "nullable": true,
+      "default": "",
+      "aliases": ["owner", "planned owner", "planned_owner"]
+    }
+  ]
+}
