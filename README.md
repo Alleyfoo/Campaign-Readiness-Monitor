@@ -4,6 +4,8 @@ Campaign Readiness Monitor compares planned campaign items against configured pr
 
 The campaign plan describes intention. The system data describes truth. The dashboard shows the gap.
 
+In the current mock phase, the app compares the campaign plan against the system state visible to the demo. The real operational verification happens when an Excel or CSV campaign plan is uploaded and fitted against the campaign plan schema.
+
 ## Framing
 
 Systems are truth. Plans are intentions. Operations is the gap between them.
@@ -22,6 +24,8 @@ All data is synthetic. The demo models two data sources:
 2. **System truth** — actual configured state across channels (truth)
 
 When no file is uploaded, the app uses the synthetic campaign plan. A basic uploader can also read `.xlsx` and `.csv` campaign plans and compare them against the mocked system truth data.
+
+The mocked system truth represents what the dashboard currently sees in product, pricing, inventory and channel data. Uploaded Excel data becomes the plan source of record for the comparison.
 
 Uploaded plans are fitted against the campaign plan schema before comparison. The Python schema lives in `campaign_schema.py`, and a machine-readable copy lives in `schemas/campaign_plan_schema.json`. The app also exposes a downloadable schema CSV and an Excel template workbook in the upload panel.
 

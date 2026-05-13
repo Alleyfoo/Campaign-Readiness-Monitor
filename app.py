@@ -84,6 +84,7 @@ def render_plan_input() -> tuple[pd.DataFrame, dict]:
             use_container_width=True,
         )
         st.caption("Use the template headers: campaign_code, campaign_name, start_date, end_date, channel, product_sku and product_price.")
+        st.caption("Demo mode compares against synthetic system truth. Real verification starts when an Excel/CSV campaign plan is uploaded.")
         with st.expander("View upload rules", expanded=False):
             st.dataframe(schema_as_dataframe(), use_container_width=True, hide_index=True)
         if uploaded is None:
@@ -94,7 +95,7 @@ def render_plan_input() -> tuple[pd.DataFrame, dict]:
                 "rows": len(plan),
                 "columns": len(plan.columns),
             }
-            st.caption("Demo mode: using synthetic campaign plan data. Upload an Excel or CSV file to replace it.")
+            st.caption("Demo mode: using synthetic campaign plan data. Upload an Excel or CSV file to verify real plan rows against the system view.")
             st.dataframe(upload_preview(plan), use_container_width=True, hide_index=True)
             return plan, info
 
