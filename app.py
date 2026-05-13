@@ -38,10 +38,14 @@ def read_campaign_plan_upload(uploaded_file) -> tuple[pd.DataFrame | None, dict,
 
 
 def render_plan_input() -> tuple[pd.DataFrame, dict]:
-    with st.expander("Data source", expanded=False):
+    with st.expander("Data source - upload Excel/CSV", expanded=True):
+        uploaded = st.file_uploader(
+            "Upload campaign plan",
+            type=["xlsx", "csv"],
+            help="Upload an Excel or CSV campaign plan. If no file is uploaded, the synthetic demo plan is used.",
+        )
         schema_df = schema_as_dataframe()
         st.caption("Campaign plan uploads are fitted against the schema below before comparison.")
-        st.dataframe(schema_df, use_container_width=True, hide_index=True)
         st.download_button(
             "Download campaign plan schema",
             schema_df.to_csv(index=False).encode("utf-8"),
@@ -57,11 +61,7 @@ def render_plan_input() -> tuple[pd.DataFrame, dict]:
             mime="text/csv",
             use_container_width=True,
         )
-        uploaded = st.file_uploader(
-            "Upload campaign plan",
-            type=["xlsx", "csv"],
-            help="Upload an Excel or CSV campaign plan. If no file is uploaded, the synthetic demo plan is used.",
-        )
+        st.dataframe(schema_df, use_container_width=True, hide_index=True)
         if uploaded is None:
             plan = generate_campaign_plan()
             info = {
