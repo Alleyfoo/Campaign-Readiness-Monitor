@@ -46,21 +46,35 @@ def build_template_workbook() -> bytes:
     return output.getvalue()
 
 
+def upload_preview(plan: pd.DataFrame) -> pd.DataFrame:
+    preview = plan.head(8).rename(
+        columns={
+            "campaign_id": "campaign_code",
+            "planned_start": "start_date",
+            "planned_end": "end_date",
+            "item_id": "product_sku",
+            "planned_price": "product_price",
+        }
+    )
+    cols = [
+        "campaign_code",
+        "campaign_name",
+        "start_date",
+        "end_date",
+        "channel",
+        "product_sku",
+        "product_price",
+        "planned_owner",
+    ]
+    return preview[[c for c in cols if c in preview.columns]]
+
+
 def render_plan_input() -> tuple[pd.DataFrame, dict]:
     with st.expander("Data source - upload Excel/CSV", expanded=True):
         uploaded = st.file_uploader(
             "Upload campaign plan",
             type=["xlsx", "csv"],
             help="Upload an Excel or CSV campaign plan. If no file is uploaded, the synthetic demo plan is used.",
-        )
-        schema_df = schema_as_dataframe()
-        st.caption("Campaign plan uploads are fitted against the schema below before comparison.")
-        st.download_button(
-            "Download campaign plan schema",
-            schema_df.to_csv(index=False).encode("utf-8"),
-            file_name="campaign_plan_schema.csv",
-            mime="text/csv",
-            use_container_width=True,
         )
         st.download_button(
             "Download Excel campaign plan template",
@@ -69,7 +83,9 @@ def render_plan_input() -> tuple[pd.DataFrame, dict]:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True,
         )
-        st.dataframe(schema_df, use_container_width=True, hide_index=True)
+        st.caption("Use the template headers: campaign_code, campaign_name, start_date, end_date, channel, product_sku and product_price.")
+        with st.expander("View upload rules", expanded=False):
+            st.dataframe(schema_as_dataframe(), use_container_width=True, hide_index=True)
         if uploaded is None:
             plan = generate_campaign_plan()
             info = {
@@ -78,7 +94,8 @@ def render_plan_input() -> tuple[pd.DataFrame, dict]:
                 "rows": len(plan),
                 "columns": len(plan.columns),
             }
-            st.caption("Using synthetic demo data. Upload an Excel or CSV campaign plan to test the comparison flow.")
+            st.caption("Demo mode: using synthetic campaign plan data. Upload an Excel or CSV file to replace it.")
+            st.dataframe(upload_preview(plan), use_container_width=True, hide_index=True)
             return plan, info
 
         plan, info, errors = read_campaign_plan_upload(uploaded)
@@ -89,6 +106,7 @@ def render_plan_input() -> tuple[pd.DataFrame, dict]:
             st.stop()
 
         st.success(f"Loaded {info['rows']} rows from {info['source']}")
+        st.dataframe(upload_preview(plan), use_container_width=True, hide_index=True)
         return plan, info
 
 
