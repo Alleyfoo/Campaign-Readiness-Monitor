@@ -1,4 +1,4 @@
-﻿import pandas as pd
+import pandas as pd
 import streamlit as st
 from datetime import date, timedelta
 import os
@@ -1049,781 +1049,1088 @@ def build_campaign_summary(plan: pd.DataFrame, exceptions: list[dict]) -> pd.Dat
     return campaigns
 
 
-def render_kpi_cards(plan: pd.DataFrame, exceptions: list[dict]):
+SEVERITY_COLORS = {"Critical": "#C7372F", "Warning": "#A55B0B", "OK": "#138A57"}
+SEVERITY_ORDER = {"Critical": 0, "Warning": 1, "OK": 2}
+CAMPAIGN_SOURCE_SHORT = {
+    "Excel plan": "Excel",
+    "SharePoint upload": "SharePoint",
+    "Manual plan": "Manual",
+    "Email attachment": "Email",
+    "System detected": "System",
+}
+
+
+def _campaign_slug(name: str) -> str:
+    return name.lower().replace(" ", "-")
+
+
+def _channel_short(ch: str) -> str:
+    return {"webshop": "Webshop", "B2B": "B2B", "mail order": "Mail order", "local store": "Local store"}.get(ch, ch)
+
+
+def _days_to(target: date) -> float:
+    return (pd.Timestamp(target) - pd.Timestamp(ANCHOR)).total_seconds() / 86400.0
+
+
+def _format_days(days: float, end_date: date | None = None) -> tuple[str, str]:
+    if days > 0:
+        return (f"{days:.1f}d", "until start")
+    if end_date is not None and pd.Timestamp(ANCHOR) <= pd.Timestamp(end_date):
+        return ("live", "active now")
+    return ("ended", "past window")
+
+
+def compute_pipeline_stages(plan: pd.DataFrame, system: pd.DataFrame, exceptions: list[dict], campaign_id: str | None) -> list[dict]:
+    if campaign_id and campaign_id != "ALL":
+        scope_plan = plan[plan["campaign_id"] == campaign_id]
+        scope_exc = [e for e in exceptions if e["campaign_id"] == campaign_id]
+    else:
+        scope_plan = plan
+        scope_exc = exceptions
+    total = scope_plan["item_id"].nunique() if not scope_plan.empty else 0
+
+    def _count_exc(matchers: list[str]) -> tuple[int, int]:
+        crit = sum(1 for e in scope_exc if any(m in e["issue_type"] for m in matchers) and e["severity"] == "Critical")
+        warn = sum(1 for e in scope_exc if any(m in e["issue_type"] for m in matchers) and e["severity"] == "Warning")
+        return crit, warn
+
+    pim_crit, pim_warn = _count_exc(["missing from system", "not active in target channel"])
+    price_crit, price_warn = _count_exc([
+        "Price mismatch", "starts too late", "ends too early", "Duplicate", "price missing", "Missing or zero price"
+    ])
+    content_crit, content_warn = _count_exc(["Missing image / content", "Missing category", "Wrong category"])
+    stock_crit, stock_warn = _count_exc(["Stock below forecast"])
+    channel_crit, channel_warn = _count_exc(["not visible in webshop", "not active in target channel"])
+
+    def _status(crit: int, warn: int) -> str:
+        if crit > 0:
+            return "crit"
+        if warn > 0:
+            return "warn"
+        return "ok"
+
+    def _stage(label: str, glyph: str, ok: int, crit: int, warn: int, hint: str) -> dict:
+        return {
+            "label": label,
+            "glyph": glyph,
+            "ok": ok,
+            "of": total,
+            "crit": crit,
+            "warn": warn,
+            "status": _status(crit, warn),
+            "hint": hint,
+        }
+
+    stages = [
+        _stage("01 · Plan", "P", total, 0, 0, "all logged"),
+        _stage("02 · Product (PIM)", "M", max(total - pim_crit, 0), pim_crit, pim_warn,
+               f"{pim_crit} missing from PIM" if pim_crit else "all items found"),
+        _stage("03 · Pricing", "$", max(total - price_crit - price_warn, 0), price_crit, price_warn,
+               f"{price_crit + price_warn} pricing issues" if (price_crit + price_warn) else "prices aligned"),
+        _stage("04 · Content", "C", max(total - content_crit - content_warn, 0), content_crit, content_warn,
+               f"{content_crit + content_warn} content gaps" if (content_crit + content_warn) else "ready"),
+        _stage("05 · Inventory", "I", max(total - stock_crit - stock_warn, 0), stock_crit, stock_warn,
+               f"{stock_crit + stock_warn} below forecast" if (stock_crit + stock_warn) else "stock ok"),
+        _stage("06 · Channel", "Ch", max(total - channel_crit - channel_warn, 0), channel_crit, channel_warn,
+               f"{channel_crit + channel_warn} channel issues" if (channel_crit + channel_warn) else "live"),
+    ]
+    return stages
+
+
+# ============= top bar =============
+def render_topbar(selected_slug: str, view_mode: str):
+    crumb = f'<span class="cur">{selected_slug}</span>'
+    seg_business = "on" if view_mode == "Business" else ""
+    seg_tech = "on" if view_mode == "Technical" else ""
+    sync_text = f"Synced just now · {ANCHOR.strftime('%b %d, %Y')}"
+    html = f"""
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark"></span>
+        <span class="brand-name">Campaign Readiness</span>
+        <span class="brand-tag">Ops · v2</span>
+      </div>
+      <div class="crumbs">
+        <span>workspace</span><span class="sep">/</span>
+        <span>operations</span><span class="sep">/</span>
+        {crumb}
+      </div>
+      <div class="top-spacer"></div>
+      <div class="sync-pill"><span class="pulse"></span>{sync_text}</div>
+      <div class="seg">
+        <span class="seg-btn {seg_business}">Business</span>
+        <span class="seg-btn {seg_tech}">Technical</span>
+      </div>
+    </header>
+    """
+    st.markdown(html, unsafe_allow_html=True)
+
+
+# ============= inspector header =============
+def render_inspector(campaign_row, exceptions: list[dict]):
+    cid = campaign_row["campaign_id"]
+    crit = int(campaign_row.get("critical_count", 0))
+    warn = int(campaign_row.get("warning_count", 0))
+    days_left = _days_to(campaign_row["planned_start"])
+    p_start = pd.Timestamp(campaign_row["planned_start"]).date()
+    p_end = pd.Timestamp(campaign_row["planned_end"]).date()
+    if crit > 0:
+        status_color = "var(--red)"
+        if days_left > 0:
+            status_text = f"● Critical · {days_left:.0f} days to launch"
+        else:
+            status_text = f"● Critical · running now"
+    elif warn > 0:
+        status_color = "var(--amber)"
+        status_text = f"● Needs attention · {warn} warnings"
+    else:
+        status_color = "var(--green)"
+        status_text = "● Ready"
+    item_count = int(campaign_row["item_count"])
+    owner_field = "Mixed owners"
+    c_exc = [e for e in exceptions if e["campaign_id"] == cid]
+    if c_exc:
+        owners = [e.get("owner", "") for e in c_exc if e.get("owner")]
+        if owners:
+            owner_field = max(set(owners), key=owners.count)
+    src = campaign_row["campaign_source"]
+    html = f"""
+    <section class="inspector">
+      <div class="insp-left">
+        <div class="insp-eyebrow">
+          <span>{cid}</span><span class="dot"></span>
+          <span>{src}</span><span class="dot"></span>
+          <span>{ANCHOR.strftime('%a %b %d, %Y')}</span>
+        </div>
+        <h1 class="insp-title">
+          {campaign_row['campaign_name']}
+          <span class="id">{_channel_short(campaign_row['channel'])}</span>
+        </h1>
+        <div class="insp-meta">
+          <span><label>Window</label>{p_start.strftime('%b %d')} → {p_end.strftime('%b %d')}</span>
+          <span><label>Items</label>{item_count} SKUs</span>
+          <span><label>Owner</label>{owner_field}</span>
+          <span><label>Status</label><span style="color:{status_color};font-weight:500">{status_text}</span></span>
+        </div>
+      </div>
+    </section>
+    """
+    st.markdown(html, unsafe_allow_html=True)
+
+
+# ============= pipeline =============
+def render_pipeline(plan: pd.DataFrame, system: pd.DataFrame, exceptions: list[dict], campaign_id: str):
+    stages = compute_pipeline_stages(plan, system, exceptions, campaign_id)
+    total = stages[0]["of"]
+    total_crit = sum(s["crit"] for s in stages[1:])
+    total_warn = sum(s["warn"] for s in stages[1:])
+    total_exc = total_crit + total_warn
+    ready_count = max(total - total_exc, 0)
+    scope_label = campaign_id if campaign_id and campaign_id != "ALL" else "All campaigns"
+
+    stage_html_parts = []
+    for stage in stages:
+        node_cls = stage["status"]
+        badge_html = ""
+        badge_total = stage["crit"] + stage["warn"]
+        if badge_total > 0:
+            badge_html = f'<span class="badge">{badge_total}</span>'
+        rows = []
+        if stage["crit"] > 0:
+            rows.append(f'<div class="row"><span class="d crit"></span>{stage["crit"]} critical</div>')
+        if stage["warn"] > 0:
+            rows.append(f'<div class="row"><span class="d warn"></span>{stage["warn"]} warning</div>')
+        if not rows:
+            rows.append(f'<div class="row"><span class="d ok"></span>{stage["hint"]}</div>')
+        rows_html = "".join(rows)
+        stage_html_parts.append(f"""
+        <div class="pipe-stage">
+          <span class="pipe-node {node_cls}">{stage['glyph']}{badge_html}</span>
+          <span class="stage-lbl">{stage['label']}</span>
+          <span class="stage-count">{stage['ok']}<span class="of"> / {stage['of']}</span></span>
+          <div class="stage-status">{rows_html}</div>
+        </div>
+        """)
+    html = f"""
+    <div class="pipeline">
+      <div class="pipe-head">
+        <div class="lhs">
+          <h3>Data flow · Plan → Customer</h3>
+          <span class="eyebrow">{scope_label} · {total} items traced</span>
+        </div>
+        <div class="rhs">
+          <span><b>{total}</b> items in</span>
+          <span class="ok">● <b>{ready_count}</b> ready</span>
+          <span class="warn">● <b>{total_warn}</b> warning</span>
+          <span class="crit">● <b>{total_crit}</b> critical</span>
+          <span>{total_exc} exceptions to resolve</span>
+        </div>
+      </div>
+      <div class="pipe-track">
+        <div class="pipe-connector"></div>
+        {''.join(stage_html_parts)}
+      </div>
+    </div>
+    """
+    st.markdown(html, unsafe_allow_html=True)
+
+
+# ============= KPIs =============
+def render_kpis(plan: pd.DataFrame, exceptions: list[dict], campaigns_df: pd.DataFrame):
     today = pd.Timestamp(ANCHOR)
-    campaigns = plan.groupby("campaign_id").agg(
+    campaign_windows = plan.groupby("campaign_id").agg(
         planned_start=("planned_start", "first"),
         planned_end=("planned_end", "first"),
+        campaign_name=("campaign_name", "first"),
     )
-    starting_soon = sum(
-        1
-        for _, r in campaigns.iterrows()
+    starting_soon_names = [
+        r["campaign_name"]
+        for _, r in campaign_windows.iterrows()
         if pd.Timestamp(r["planned_start"]) > today
         and (pd.Timestamp(r["planned_start"]) - today).days <= 7
-    )
-    active_now = sum(
-        1
-        for _, r in campaigns.iterrows()
+    ]
+    starting_soon = len(starting_soon_names)
+    active_now_rows = [
+        r
+        for _, r in campaign_windows.iterrows()
         if pd.Timestamp(r["planned_start"]) <= today <= pd.Timestamp(r["planned_end"])
-    )
+    ]
+    active_now = len(active_now_rows)
     total_planned = plan["item_id"].nunique()
     crit_count = sum(1 for e in exceptions if e["severity"] == "Critical")
     warn_count = sum(1 for e in exceptions if e["severity"] == "Warning")
-    ready = total_planned - sum(
-        1
-        for e in exceptions
-        if e["issue_type"] != "System item active but missing from any plan"
-        and e["campaign_id"] != "SYSTEM-DETECTED"
-    )
-    ready = max(ready, 0)
-    unplanned = sum(1 for e in exceptions if e["campaign_id"] == "SYSTEM-DETECTED")
-    missing_owners = sum(1 for e in exceptions if e["issue_type"] == "Owner missing")
+    planned_in_scope = [
+        e for e in exceptions if e["campaign_id"] != "SYSTEM-DETECTED"
+    ]
+    items_with_issues = {e["item_id"] for e in planned_in_scope}
+    ready = max(total_planned - len(items_with_issues), 0)
+    ready_pct = int(round(ready / total_planned * 100)) if total_planned else 0
+
+    starting_foot = ", ".join(starting_soon_names[:2]) if starting_soon_names else "—"
+    if active_now_rows:
+        active_foot = active_now_rows[0]["campaign_name"]
+    else:
+        active_foot = "none in window"
+
     html = f"""
-    <div class="kpi-grid">
-      <div class="kpi-card kpi-teal"><div class="kpi-label">Starting Soon</div><div class="kpi-value">{starting_soon}</div></div>
-      <div class="kpi-card kpi-teal"><div class="kpi-label">Active Now</div><div class="kpi-value">{active_now}</div></div>
-      <div class="kpi-card"><div class="kpi-label">Total Planned Items</div><div class="kpi-value">{total_planned}</div></div>
-      <div class="kpi-card kpi-ok"><div class="kpi-label">Ready Items</div><div class="kpi-value">{ready}</div></div>
-      <div class="kpi-card kpi-crit"><div class="kpi-label">Critical</div><div class="kpi-value">{crit_count}</div></div>
-      <div class="kpi-card kpi-warn"><div class="kpi-label">Warnings</div><div class="kpi-value">{warn_count}</div></div>
-      <div class="kpi-card kpi-grey"><div class="kpi-label">Unplanned Activity</div><div class="kpi-value">{unplanned}</div></div>
-      <div class="kpi-card kpi-warn"><div class="kpi-label">Missing Owners</div><div class="kpi-value">{missing_owners}</div></div>
-    </div>
+    <section class="section">
+      <div class="section-head">
+        <div class="left">
+          <span class="eyebrow">01 — Health</span>
+          <h2>This week's window <span class="muted">· {ANCHOR.strftime('%a %b %d, %Y')}</span></h2>
+        </div>
+        <div class="right"><span>across all campaigns</span></div>
+      </div>
+      <div class="kpis">
+        <div class="kpi">
+          <div class="top"><span class="lbl">Starting soon</span></div>
+          <div class="val">{starting_soon}</div>
+          <div class="foot">≤ 7 days · {starting_foot}</div>
+        </div>
+        <div class="kpi">
+          <div class="top"><span class="lbl">Active now</span></div>
+          <div class="val">{active_now}</div>
+          <div class="foot">{active_foot}</div>
+        </div>
+        <div class="kpi">
+          <div class="top"><span class="lbl">Planned items</span></div>
+          <div class="val">{total_planned}</div>
+          <div class="foot">across {len(campaign_windows)} campaigns</div>
+        </div>
+        <div class="kpi k-ok">
+          <div class="top"><span class="lbl">Ready</span></div>
+          <div class="val">{ready}<span class="unit">/ {total_planned}</span></div>
+          <div class="foot">{ready_pct}% pipeline complete</div>
+        </div>
+        <div class="kpi k-crit">
+          <div class="top"><span class="lbl">Critical</span></div>
+          <div class="val">{crit_count}</div>
+          <div class="foot">must resolve before launch</div>
+        </div>
+        <div class="kpi k-warn">
+          <div class="top"><span class="lbl">Warnings</span></div>
+          <div class="val">{warn_count}</div>
+          <div class="foot">accept · fix · defer</div>
+        </div>
+      </div>
+    </section>
     """
     st.markdown(html, unsafe_allow_html=True)
 
 
-def render_campaign_select(
-    campaigns_df: pd.DataFrame,
-    plan: pd.DataFrame,
-    plan_issues: list[dict],
-    selected_id: str | None,
-):
-    st.markdown(
-        '<div class="landing-hero"><h1>Which campaign are we reviewing?</h1><div class="subtitle">Select a campaign to assess readiness, spot mismatches, and prepare the handoff.</div></div>',
-        unsafe_allow_html=True,
-    )
-    st.markdown('<div class="campaign-select-grid">', unsafe_allow_html=True)
-    for _, row in campaigns_df.iterrows():
+# ============= campaign cards =============
+def render_campaign_cards(campaigns_df: pd.DataFrame, selected_id: str):
+    today = pd.Timestamp(ANCHOR)
+    sorted_df = campaigns_df.copy()
+    sorted_df = sorted_df.sort_values("planned_start").reset_index(drop=True)
+
+    cards_html = []
+    for _, row in sorted_df.iterrows():
         cid = row["campaign_id"]
-        pct = int(row.get("readiness_pct", 0))
+        total = int(row["item_count"])
         crit = int(row.get("critical_count", 0))
         warn = int(row.get("warning_count", 0))
-        pq_count = sum(1 for i in plan_issues if i["campaign_id"] == cid)
+        ready = int(row.get("ready_items", 0))
+        pct = int(row.get("readiness_pct", 0))
+        p_start = pd.Timestamp(row["planned_start"])
+        p_end = pd.Timestamp(row["planned_end"])
+        ok_pct = round(ready / total * 100, 1) if total else 0
+        warn_pct = round(warn / total * 100, 1) if total else 0
+        crit_pct = max(round(100 - ok_pct - warn_pct, 1), 0)
+        days = (p_start - today).days
+        if days > 0:
+            urgency_label = f"{days}d"
+            urgency_color = "var(--red)" if crit > 0 else ("var(--amber)" if days <= 7 else "var(--ink-3)")
+        elif today <= p_end:
+            urgency_label = "live"
+            urgency_color = "var(--green)"
+        else:
+            urgency_label = "done"
+            urgency_color = "var(--ink-4)"
         selected_class = " selected" if cid == selected_id else ""
-        status_color = (
-            "#059669"
-            if crit == 0 and warn == 0
-            else ("#DC2626" if crit > 0 else "#D97706")
-        )
-        status_label = (
-            "Ready"
-            if crit == 0 and warn == 0
-            else ("Critical" if crit > 0 else "Warning")
-        )
-        html = f"""
-        <div class="campaign-select-card{selected_class}" id="campaign-{cid}">
-          <div class="cs-name">{row['campaign_name']}</div>
-          <div class="cs-meta">{row['campaign_source']} &middot; {row['channel']} &middot; {str(row['planned_start'])[:10]} &ndash; {str(row['planned_end'])[:10]}</div>
-          <div class="cs-stats">
-            <div class="cs-stat"><span class="cs-dot ok"></span> {int(row.get('ready_items', 0))} ready</div>
-            <div class="cs-stat"><span class="cs-dot crit"></span> {crit} critical</div>
-            <div class="cs-stat"><span class="cs-dot warn"></span> {warn} warning</div>
-            <div class="cs-stat" style="color:{status_color};font-weight:600">{pct}% {status_label}</div>
+        src_short = CAMPAIGN_SOURCE_SHORT.get(row["campaign_source"], row["campaign_source"])
+        owner_short = row.get("owner", "")
+        if not owner_short:
+            owner_short = "—"
+        else:
+            owner_short = str(owner_short).split(" (")[0]
+        cards_html.append(f"""
+        <article class="camp{selected_class}">
+          <div class="camp-top">
+            <span class="camp-id">{cid} · {src_short}</span>
+            <span class="sel-tag">In focus</span>
           </div>
+          <div class="camp-name">{row['campaign_name']}</div>
+          <div class="camp-meta">
+            <span><label>Ch</label>{_channel_short(row['channel'])}</span>
+            <span><label>Win</label>{p_start.strftime('%b %d')} → {p_end.strftime('%b %d')}</span>
+            <span><label>Own</label>{owner_short}</span>
+          </div>
+          <div class="camp-bar">
+            <span class="bar-ok"   style="width:{ok_pct}%"></span>
+            <span class="bar-warn" style="width:{warn_pct}%"></span>
+            <span class="bar-crit" style="width:{crit_pct}%"></span>
+          </div>
+          <div class="camp-foot">
+            <span class="pct">{pct}%</span>
+            <span class="camp-stats">
+              <span class="s"><span class="d d-ok"></span>{ready}</span>
+              <span class="s"><span class="d d-warn"></span>{warn}</span>
+              <span class="s"><span class="d d-crit"></span>{crit}</span>
+              <span style="color:{urgency_color};font-weight:500">{urgency_label}</span>
+            </span>
+          </div>
+        </article>
+        """)
+
+    section_head = """
+    <section class="section">
+      <div class="section-head">
+        <div class="left">
+          <span class="eyebrow">02 — Campaigns</span>
+          <h2>{n} in flight or queued</h2>
         </div>
-        """
-        st.markdown(html, unsafe_allow_html=True)
+        <div class="right">
+          <span>Sorted by start date</span>
+        </div>
+      </div>
+    """.replace("{n}", str(len(sorted_df)))
+
+    st.markdown(section_head + f'<div class="campaigns">{"".join(cards_html)}</div></section>', unsafe_allow_html=True)
+
+    # Functional buttons row beneath the cards for selection
+    st.markdown('<div class="invisible-btn-row" style="margin-top:8px">', unsafe_allow_html=True)
+    cols = st.columns(len(sorted_df))
+    for ci, (_, row) in enumerate(sorted_df.iterrows()):
+        with cols[ci]:
+            label = "● In focus" if row["campaign_id"] == selected_id else f"Focus {row['campaign_id']}"
+            if st.button(label, key=f"camp_select_{row['campaign_id']}", use_container_width=True):
+                st.session_state.selected_campaign = row["campaign_id"]
+                st.rerun()
     st.markdown("</div>", unsafe_allow_html=True)
 
 
-def render_campaign_hero(
-    campaign_row, plan: pd.DataFrame, exceptions: list[dict], plan_issues: list[dict]
-):
-    cid = campaign_row["campaign_id"]
-    c_exc = [e for e in exceptions if e["campaign_id"] == cid]
-    c_pq = [i for i in plan_issues if i["campaign_id"] == cid]
-    total = int(campaign_row["item_count"])
-    crit = int(campaign_row.get("critical_count", 0))
-    warn = int(campaign_row.get("warning_count", 0))
-    ready = int(campaign_row.get("ready_items", 0))
-    pct = int(campaign_row.get("readiness_pct", 0))
-    p_start = str(campaign_row["planned_start"])[:10]
-    p_end = str(campaign_row["planned_end"])[:10]
-    days_left = (
-        pd.Timestamp(campaign_row["planned_start"]) - pd.Timestamp(ANCHOR)
-    ).days
-    days_label = (
-        f"{days_left}d until start"
-        if days_left > 0
-        else (
-            "Active now"
-            if days_left <= 0
-            and pd.Timestamp(ANCHOR) <= pd.Timestamp(campaign_row["planned_end"])
-            else "Ended"
-        )
-    )
+# ============= exceptions =============
+def _pick_focus_exception(camp_exc: list[dict]) -> dict | None:
+    if not camp_exc:
+        return None
+    critical = [e for e in camp_exc if e["severity"] == "Critical"]
+    pool = critical if critical else camp_exc
+    item_counts: dict[str, int] = {}
+    for e in pool:
+        item_counts[e["item_id"]] = item_counts.get(e["item_id"], 0) + 1
+    top_item = max(item_counts, key=item_counts.get)
+    top_item_excs = [e for e in pool if e["item_id"] == top_item]
+    return top_item_excs[0]
+
+
+def _build_diff_rows(focus: dict, plan_row, sys_row) -> list[dict]:
+    rows = []
+    p_visible = bool(plan_row.get("planned_visibility", True))
+    if sys_row is not None and focus["channel"] == "webshop":
+        sys_vis = bool(sys_row["webshop_visible"])
+        rows.append({
+            "field": "Visibility",
+            "plan_v": "visible" if p_visible else "hidden",
+            "plan_src": f"planned_visibility · {str(p_visible).lower()}",
+            "sys_v": "hidden" if not sys_vis else "visible",
+            "sys_src": f"webshop_visible · {str(sys_vis).lower()}",
+            "sys_status": "bad" if (p_visible and not sys_vis) else "ok",
+        })
+    if sys_row is not None:
+        img_ready = bool(sys_row["image_ready"])
+        content_ready = bool(sys_row["content_ready"])
+        if not img_ready or not content_ready:
+            missing = []
+            if not img_ready: missing.append("image")
+            if not content_ready: missing.append("content")
+            rows.append({
+                "field": "Content",
+                "plan_v": "ready expected",
+                "plan_src": "required for launch",
+                "sys_v": f"missing {', '.join(missing)}",
+                "sys_src": f"image_ready · {str(img_ready).lower()}",
+                "sys_status": "warn",
+            })
+    if sys_row is not None:
+        stock = int(sys_row["stock_on_hand"]) if pd.notna(sys_row["stock_on_hand"]) else 0
+        forecast = int(sys_row["forecast_demand"]) if pd.notna(sys_row["forecast_demand"]) else 0
+        if forecast > 0:
+            status = "warn" if stock < forecast else "ok"
+            rows.append({
+                "field": "Stock",
+                "plan_v": f"{forecast} forecast",
+                "plan_src": f"forecast_demand · {forecast}",
+                "sys_v": f"{stock} on hand",
+                "sys_src": f"stock_on_hand · {stock}",
+                "sys_status": status,
+            })
+    planned_price = float(plan_row["planned_price"]) if pd.notna(plan_row["planned_price"]) else 0.0
+    if sys_row is not None:
+        sys_price = float(sys_row["system_price"]) if pd.notna(sys_row["system_price"]) else 0.0
+        if sys_price > 0:
+            status = "ok" if abs(sys_price - planned_price) <= planned_price * 0.01 else "warn"
+            rows.append({
+                "field": "Price",
+                "plan_v": f"{planned_price:.2f} €",
+                "plan_src": "planned_price",
+                "sys_v": f"{sys_price:.2f} €",
+                "sys_src": "system_price" + (" · in sync" if status == "ok" else " · mismatch"),
+                "sys_status": status,
+            })
+        else:
+            rows.append({
+                "field": "Price",
+                "plan_v": f"{planned_price:.2f} €",
+                "plan_src": "planned_price",
+                "sys_v": "no record",
+                "sys_src": "system_price · missing",
+                "sys_status": "bad",
+            })
+    else:
+        rows.append({
+            "field": "SKU",
+            "plan_v": focus["item_id"],
+            "plan_src": "planned in campaign",
+            "sys_v": "not found",
+            "sys_src": "no system record",
+            "sys_status": "bad",
+        })
+    return rows
+
+
+def _suggested_step(focus: dict, sys_row) -> str:
+    issue = focus["issue_type"].lower()
+    if "not visible in webshop" in issue:
+        return "Toggle <code>webshop_visible = true</code> in PIM, then verify image + stock are ready."
+    if "missing from system" in issue:
+        return f"Create <code>{focus['item_id']}</code> in PIM and configure pricing, or remove from the plan."
+    if "duplicate" in issue:
+        return "Resolve duplicate price records to one canonical entry per channel."
+    if "price mismatch" in issue:
+        return f"Align system price with planned <code>{focus['plan_value']}</code>, or update the plan."
+    if "starts too late" in issue:
+        return f"Move <code>price_start</code> to match campaign start date."
+    if "ends too early" in issue:
+        return "Extend <code>price_end</code> to cover the full campaign window."
+    if "missing image" in issue or "missing content" in issue:
+        return "Upload hero + thumbnail and content blocks before launch."
+    if "below forecast" in issue:
+        return "Replenish stock, or notify Inventory to adjust the forecast."
+    if "owner missing" in issue:
+        return "Assign an owner in the campaign plan."
+    return focus.get("action", "Review and decide on next step.")
+
+
+def render_focus_card(focus: dict | None, plan: pd.DataFrame, system: pd.DataFrame, queue_remaining: int):
+    if focus is None:
+        st.markdown("""
+        <article class="focus">
+          <div class="focus-bar ok"><span>● All clear</span><span class="sep">·</span><span>No critical exceptions on this campaign</span></div>
+          <div class="focus-body" style="padding-bottom:22px">
+            <div class="focus-titleblock">
+              <h3>Ready to ship</h3>
+              <p class="issue-line">All system data agrees with the campaign plan. Spot-check the timeline below and route the handoff packet to confirm.</p>
+            </div>
+          </div>
+        </article>
+        """, unsafe_allow_html=True)
+        return
+
+    plan_match = plan[(plan["campaign_id"] == focus["campaign_id"]) & (plan["item_id"] == focus["item_id"])]
+    plan_row = plan_match.iloc[0] if not plan_match.empty else plan.iloc[0]
+    sys_match = system[(system["item_id"] == focus["item_id"]) & (system["system_channel"] == focus["channel"])]
+    sys_row = sys_match.iloc[0] if not sys_match.empty else None
+
+    sev = focus["severity"]
+    bar_cls = "warn" if sev == "Warning" else ""
+    days_left = _days_to(plan_row["planned_start"])
+    if days_left > 0:
+        pressure_label, pressure_sub = f"{days_left:.1f}", f"{pd.Timestamp(plan_row['planned_start']).strftime('%b %d, 00:00 CET')}"
+        pressure_lbl_text = "Days to start"
+    elif pd.Timestamp(ANCHOR) <= pd.Timestamp(plan_row["planned_end"]):
+        pressure_label, pressure_sub = "live", "active now"
+        pressure_lbl_text = "Status"
+    else:
+        pressure_label, pressure_sub = "ended", f"{pd.Timestamp(plan_row['planned_end']).strftime('%b %d')}"
+        pressure_lbl_text = "Status"
+
+    stacked = sum(1 for _ in [None])
+    p_start = pd.Timestamp(plan_row["planned_start"])
+    days_to_str = "live" if days_left <= 0 else f"{int(days_left)}d {int((days_left % 1) * 24):02d}h"
+
+    bar_label = f"{sev} · {focus.get('issue_origin', 'Issue')}"
+    bar_right_lbl = "Active" if days_left <= 0 else "Launches in"
+    diff_rows = _build_diff_rows(focus, plan_row, sys_row)
+    diff_html_rows = []
+    for r in diff_rows:
+        diff_html_rows.append(f"""
+        <div class="diff-row">
+          <div class="diff-field">{r['field']}</div>
+          <div class="diff-cell plan">
+            <span class="v">{r['plan_v']}</span>
+            <span class="src">{r['plan_src']}</span>
+          </div>
+          <div class="diff-arrow">→</div>
+          <div class="diff-cell sys {r['sys_status']}">
+            <span class="v">{r['sys_v']}</span>
+            <span class="src">{r['sys_src']}</span>
+          </div>
+        </div>
+        """)
+    product_name = focus.get("product_name") or (sys_row["product_name"] if sys_row is not None else focus["item_id"])
+
+    short_issue_line = focus.get("risk", "")
+    suggested = _suggested_step(focus, sys_row)
+    owner = focus.get("owner", "Unassigned")
+    owner_initial = (owner[:1] or "?").upper()
+
     html = f"""
-    <div class="campaign-hero">
-      <h2>{campaign_row['campaign_name']}</h2>
-      <div class="hero-meta">
-        <span>{campaign_row['campaign_source']}</span>
-        <span>{campaign_row['channel']}</span>
-        <span>{p_start} &ndash; {p_end}</span>
-        <span>{days_label}</span>
-        <span>{total} items</span>
+    <article class="focus {bar_cls}">
+      <div class="focus-bar {bar_cls}">
+        <span>{bar_label}</span>
+        <span class="sep">·</span>
+        <span>{_channel_short(focus['channel'])} channel</span>
+        <span class="sep">·</span>
+        <span>{focus['campaign_name']}</span>
+        <span class="right">{bar_right_lbl} <b>{days_to_str}</b></span>
       </div>
-      <div class="readiness-bar-wrap">
-        <div class="readiness-bar-outer">
-          <div class="readiness-bar-ok" style="width:{max(ready/total*100, 0):.0f}%"></div>
-          <div class="readiness-bar-warn" style="width:{max(warn/total*100, 0):.0f}%"></div>
-          <div class="readiness-bar-crit" style="width:{max(crit/total*100, 0):.0f}%"></div>
+      <div class="focus-body">
+        <div class="focus-head">
+          <div class="focus-titleblock">
+            <div class="breadcrumb">
+              <span class="sku">{focus['item_id']}</span><span class="sep">·</span>
+              <span>{focus['campaign_id']} {focus['campaign_name']}</span><span class="sep">·</span>
+              <span>{_channel_short(focus['channel'])}</span>
+            </div>
+            <h3>{product_name} <span class="muted">— {focus['issue_type'].lower()}</span></h3>
+            <p class="issue-line">{short_issue_line}</p>
+          </div>
+          <div class="focus-pressure">
+            <span class="lbl">{pressure_lbl_text}</span>
+            <span class="val">{pressure_label}</span>
+            <span class="sub">{pressure_sub}</span>
+          </div>
         </div>
-        <div class="readiness-legend">
-          <span style="color:var(--green)">&#9679; {ready} ready</span>
-          <span style="color:var(--amber)">&#9679; {warn} warnings</span>
-          <span style="color:var(--red)">&#9679; {crit} critical</span>
-          <span style="color:var(--ink-3)">{pct}% readiness</span>
+        <div class="diff">
+          <div class="diff-row head">
+            <div></div>
+            <div class="src"><span class="d"></span>Plan</div>
+            <div></div>
+            <div class="src sys"><span class="d"></span>System</div>
+          </div>
+          {''.join(diff_html_rows)}
+        </div>
+        <div class="suggested">
+          <span class="icon-circle">✓</span>
+          <div class="body">
+            <span class="lbl">Suggested next step</span>
+            <span class="text">{suggested}</span>
+          </div>
         </div>
       </div>
+      <div class="focus-foot">
+        <div class="owner">
+          <span class="avatar">{owner_initial}</span>
+          <div class="owner-text">
+            <span class="l">Suggested owner</span>
+            <span class="n">{owner}</span>
+          </div>
+        </div>
+        <div class="actions" style="font-family:var(--mono);font-size:11px;color:var(--ink-3)">
+          {queue_remaining} more in queue
+        </div>
+      </div>
+    </article>
+    """
+    st.markdown(html, unsafe_allow_html=True)
+
+
+def render_queue_cards(queue: list[dict]):
+    items_html = []
+    for exc in queue:
+        sev_cls = "crit" if exc["severity"] == "Critical" else "warn"
+        days = _days_to(_resolve_date(exc.get("date_window", "")))
+        if days is None or days != days:  # NaN check via inequality
+            urg = "—"
+        elif days > 0:
+            urg = f"{days:.1f}d"
+        else:
+            urg = "live"
+        owner = (exc.get("owner") or "—").split(" (")[0]
+        items_html.append(f"""
+        <article class="qc {sev_cls}">
+          <span class="sev"></span>
+          <div class="qc-body">
+            <div class="qc-top">
+              <span class="sku">{exc['item_id']}</span>
+              <span>{exc['campaign_id']}</span>
+              <span class="sev-pill {sev_cls}"><span class="d"></span>{exc['severity']}</span>
+            </div>
+            <div class="qc-title">{exc.get('product_name', exc['item_id'])} <span class="muted">— {exc['issue_type'].lower()}</span></div>
+            <div class="qc-issue">{exc.get('risk', '')}</div>
+            <div class="qc-act"><span class="ar">→</span>{exc.get('action', '')}</div>
+          </div>
+          <div class="qc-meta">
+            <span class="urg">{urg}</span>
+            <span class="who">{owner}</span>
+          </div>
+        </article>
+        """)
+    head = '<div class="queue-head"><span>Up next</span><span>Ordered by urgency</span></div>'
+    st.markdown(f'<div class="queue">{head}{"".join(items_html)}</div>', unsafe_allow_html=True)
+
+
+def _resolve_date(date_window: str):
+    if not date_window:
+        return None
+    try:
+        start = date_window.split(" - ")[0]
+        return pd.Timestamp(start).date()
+    except Exception:
+        return None
+
+
+def render_exception_rail(exceptions: list[dict], focus_item: str | None):
+    if not exceptions:
+        return
+    minis = []
+    for exc in exceptions:
+        sev_cls = "crit" if exc["severity"] == "Critical" else ("warn" if exc["severity"] == "Warning" else "ok")
+        focus_cls = " focus-mini" if focus_item and exc["item_id"] == focus_item else ""
+        owner = (exc.get("owner") or "—").split(" (")[0]
+        d = _days_to(_resolve_date(exc.get("date_window", "")))
+        urg = f"{d:.1f}d" if d and d > 0 else ("live" if d is not None else "—")
+        focus_label = " · in focus" if focus_item and exc["item_id"] == focus_item else ""
+        minis.append(f"""
+        <article class="mini {sev_cls}{focus_cls}">
+          <span class="sku">{exc['item_id']}{focus_label}</span>
+          <span class="nm">{exc.get('product_name', exc['item_id'])}</span>
+          <span class="iss">{exc['issue_type']}</span>
+          <span class="meta"><span>{urg}</span><span>{owner}</span></span>
+        </article>
+        """)
+    html = f"""
+    <div class="exc-rail-wrap">
+      <div class="exc-rail-head">
+        <span class="lbl">All remaining · scroll for the full queue</span>
+        <span class="lbl"><b>{len(exceptions)}</b> total</span>
+      </div>
+      <div class="exc-rail">{''.join(minis)}</div>
     </div>
     """
     st.markdown(html, unsafe_allow_html=True)
 
 
-def render_timeline_view(
-    plan: pd.DataFrame, system: pd.DataFrame, exceptions: list[dict], campaign_id: str
+def render_exceptions_section(
+    exceptions_all: list[dict],
+    plan: pd.DataFrame,
+    system: pd.DataFrame,
+    focused_campaign_id: str,
+    severity_filter: list[str],
+    origin_filter: list[str],
 ):
-    camp_plan = plan[plan["campaign_id"] == campaign_id]
+    cid_filter = lambda e: (focused_campaign_id == "ALL") or (e["campaign_id"] == focused_campaign_id)
+    in_scope = [e for e in exceptions_all if cid_filter(e)]
+    in_scope.sort(key=lambda e: (SEVERITY_ORDER.get(e["severity"], 9), e.get("item_id", "")))
+
+    filtered = [
+        e for e in in_scope
+        if e["severity"] in severity_filter and e.get("issue_origin", "") in origin_filter
+    ]
+
+    crit_n = sum(1 for e in in_scope if e["severity"] == "Critical")
+    warn_n = sum(1 for e in in_scope if e["severity"] == "Warning")
+    origins = {
+        "Plan issue": sum(1 for e in in_scope if e.get("issue_origin") == "Plan issue"),
+        "System issue": sum(1 for e in in_scope if e.get("issue_origin") == "System issue"),
+        "Cross-system mismatch": sum(1 for e in in_scope if e.get("issue_origin") == "Cross-system mismatch"),
+        "Inferred/unplanned activity": sum(1 for e in in_scope if e.get("issue_origin") == "Inferred/unplanned activity"),
+    }
+
+    section_head = f"""
+    <section class="section">
+      <div class="section-head">
+        <div class="left">
+          <span class="eyebrow">03 — Exception queue</span>
+          <h2>{len(in_scope)} to resolve <span class="muted">· ordered by pressure</span></h2>
+        </div>
+        <div class="right"><span>Showing {len(filtered)} / {len(in_scope)}</span></div>
+      </div>
+    """
+    chips_html = f"""
+      <div class="filterbar">
+        <span class="chip {'on' if set(severity_filter) == {'Critical', 'Warning', 'OK'} else ''}">All <span class="ct">{len(in_scope)}</span></span>
+        <span class="chip"><span class="d d-crit"></span>Critical <span class="ct">{crit_n}</span></span>
+        <span class="chip"><span class="d d-warn"></span>Warning <span class="ct">{warn_n}</span></span>
+        <span class="chip-sep"></span>
+        <span class="chip">Plan issue <span class="ct">{origins['Plan issue']}</span></span>
+        <span class="chip">System <span class="ct">{origins['System issue']}</span></span>
+        <span class="chip">Cross-system <span class="ct">{origins['Cross-system mismatch']}</span></span>
+        <span class="chip">Inferred <span class="ct">{origins['Inferred/unplanned activity']}</span></span>
+      </div>
+    """
+    st.markdown(section_head + chips_html, unsafe_allow_html=True)
+
+    # functional filter controls below the visual chips
+    fc1, fc2 = st.columns([1, 1])
+    with fc1:
+        new_sev = st.multiselect(
+            "Severity",
+            ["Critical", "Warning", "OK"],
+            default=severity_filter,
+            key="sev_filter",
+            label_visibility="collapsed",
+            placeholder="Filter severity",
+        )
+    with fc2:
+        new_origin = st.multiselect(
+            "Issue origin",
+            ["Plan issue", "System issue", "Cross-system mismatch", "Inferred/unplanned activity"],
+            default=origin_filter,
+            key="origin_filter",
+            label_visibility="collapsed",
+            placeholder="Filter origin",
+        )
+    if new_sev != severity_filter or new_origin != origin_filter:
+        st.session_state.severity_filter_state = new_sev
+        st.session_state.origin_filter_state = new_origin
+        st.rerun()
+
+    if not filtered:
+        st.markdown('<div class="queue-more">No exceptions match the current filters.</div>', unsafe_allow_html=True)
+        st.markdown('</section>', unsafe_allow_html=True)
+        return
+
+    focus = _pick_focus_exception(filtered)
+    queue = [e for e in filtered if e is not focus][:4]
+    queue_remaining = max(len(filtered) - 1 - len(queue), 0)
+
+    st.markdown('<div class="exc-grid">', unsafe_allow_html=True)
+    col_focus, col_queue = st.columns([3, 2], gap="small")
+    with col_focus:
+        render_focus_card(focus, plan, system, queue_remaining + len(queue))
+    with col_queue:
+        render_queue_cards(queue)
+        if queue_remaining > 0:
+            st.markdown(f'<div class="queue-more">+ <b>{queue_remaining}</b> more in the queue</div>', unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    render_exception_rail(filtered, focus["item_id"] if focus else None)
+    st.markdown('</section>', unsafe_allow_html=True)
+
+
+# ============= timeline =============
+def render_timeline(plan: pd.DataFrame, system: pd.DataFrame, exceptions: list[dict], campaign_id: str):
+    camp_plan = plan[plan["campaign_id"] == campaign_id] if campaign_id != "ALL" else plan
     if camp_plan.empty:
         return
 
-    p_start = pd.Timestamp(camp_plan["planned_start"].iloc[0])
-    p_end = pd.Timestamp(camp_plan["planned_end"].iloc[0])
-    channel = camp_plan["channel"].iloc[0]
+    starts = pd.to_datetime(camp_plan["planned_start"])
+    ends = pd.to_datetime(camp_plan["planned_end"])
+    timeline_start = (starts.min() - timedelta(days=2)).normalize()
+    timeline_end = (ends.max() + timedelta(days=2)).normalize()
+    total_days = max((timeline_end - timeline_start).days, 1)
 
-    timeline_start = p_start - timedelta(days=2)
-    timeline_end = p_end + timedelta(days=2)
-    total_days = (timeline_end - timeline_start).days
-    if total_days <= 0:
-        total_days = 1
-
-    def date_to_pct(d):
-        if pd.isna(d) or d is None:
+    def pct_left(d):
+        if d is None or pd.isna(d):
             return None
-        return round(
-            max(
-                0, min(100, (pd.Timestamp(d) - timeline_start).days / total_days * 100)
-            ),
-            1,
-        )
+        d = pd.Timestamp(d)
+        return round(max(0, min(100, (d - timeline_start).days / total_days * 100)), 1)
 
     def pct_width(s, e):
-        if pd.isna(s) or pd.isna(e) or s is None or e is None:
-            return 0
-        return round(
-            max(
-                0, min(100, (pd.Timestamp(e) - pd.Timestamp(s)).days / total_days * 100)
-            ),
-            1,
-        )
+        l = pct_left(s)
+        r = pct_left(e)
+        if l is None or r is None:
+            return 0, 0
+        return l, max(round(r - l, 1), 0)
 
-    c_exc = [e for e in exceptions if e["campaign_id"] == campaign_id]
-    exc_by_item = {}
-    for e in c_exc:
+    today_pct = pct_left(pd.Timestamp(ANCHOR))
+
+    exc_by_item: dict[str, list[dict]] = {}
+    scope_exc = [e for e in exceptions if e["campaign_id"] == campaign_id] if campaign_id != "ALL" else exceptions
+    for e in scope_exc:
         exc_by_item.setdefault(e["item_id"], []).append(e)
 
-    timeline_rows = []
+    rows_html = []
     for _, row in camp_plan.iterrows():
         item_id = row["item_id"]
-        planned_price = row["planned_price"]
-        sys_rows = system[
-            (system["item_id"] == item_id) & (system["system_channel"] == channel)
-        ]
+        channel = row["channel"]
+        sys_rows = system[(system["item_id"] == item_id) & (system["system_channel"] == channel)]
         sys_row = sys_rows.iloc[0] if not sys_rows.empty else None
-        product_name = sys_row["product_name"] if sys_row is not None else "Unknown"
+        product_name = sys_row["product_name"] if sys_row is not None else "—"
         item_exc = exc_by_item.get(item_id, [])
-
         crit_count = sum(1 for e in item_exc if e["severity"] == "Critical")
         warn_count = sum(1 for e in item_exc if e["severity"] == "Warning")
-        severity = (
-            "Critical" if crit_count > 0 else ("Warning" if warn_count > 0 else "OK")
-        )
+        severity = "crit" if crit_count else ("warn" if warn_count else "ok")
+        pct_complete = 100 if severity == "ok" else (25 if severity == "crit" else 75)
+        status_label = "Ready" if severity == "ok" else ("Critical" if severity == "crit" else "Needs work")
 
-        price_s = sys_row["price_start"] if sys_row is not None else None
-        price_e = sys_row["price_end"] if sys_row is not None else None
-        sys_price = sys_row["system_price"] if sys_row is not None else 0
-        sys_visible = sys_row["webshop_visible"] if sys_row is not None else False
-        stock = sys_row["stock_on_hand"] if sys_row is not None else 0
-        forecast = sys_row["forecast_demand"] if sys_row is not None else 0
-        stock_risk = sys_row["stock_risk"] if sys_row is not None else "N/A"
-        image_ready = sys_row["image_ready"] if sys_row is not None else False
-        content_ready = sys_row["content_ready"] if sys_row is not None else False
-        product_exists = sys_row["product_exists"] if sys_row is not None else False
+        p_start = pd.Timestamp(row["planned_start"])
+        p_end = pd.Timestamp(row["planned_end"])
+        plan_left, plan_w = pct_width(p_start, p_end)
 
         price_status = "ok"
-        if not product_exists or sys_row is None:
-            price_status = "crit"
-        elif pd.isna(price_s) or sys_price == 0:
-            price_status = "crit"
-        elif pd.notna(price_s) and price_s > p_start:
-            price_status = "warn"
-        elif pd.notna(price_e) and price_e < p_end:
-            price_status = "warn"
-        elif abs(sys_price - planned_price) > planned_price * 0.01:
-            price_status = "warn"
-
-        vis_status = "ok"
-        if channel == "webshop":
-            if not product_exists or sys_row is None:
-                vis_status = "crit"
-            elif not sys_visible:
-                vis_status = "crit"
-            elif pd.notna(price_s) and price_s > p_start:
-                vis_status = "warn"
-            elif pd.notna(price_e) and price_e < p_end:
-                vis_status = "warn"
-
-        stock_status = "ok"
-        if not product_exists or sys_row is None:
-            stock_status = "crit"
-        elif stock_risk == "high":
-            stock_status = "crit"
-        elif stock_risk == "medium":
-            stock_status = "warn"
-        elif stock < forecast:
-            stock_status = "warn"
-
-        timeline_rows.append(
-            {
-                "item_id": item_id,
-                "product_name": product_name,
-                "severity": severity,
-                "planned_start": p_start,
-                "planned_end": p_end,
-                "price_start": price_s,
-                "price_end": price_e,
-                "sys_price": sys_price,
-                "price_status": price_status,
-                "vis_status": vis_status,
-                "sys_visible": sys_visible,
-                "stock_on_hand": stock,
-                "forecast_demand": forecast,
-                "stock_risk": stock_risk,
-                "stock_status": stock_status,
-                "image_ready": image_ready,
-                "content_ready": content_ready,
-                "product_exists": product_exists,
-                "issues": item_exc,
-            }
-        )
-
-    severity_order = {"Critical": 0, "Warning": 1, "OK": 2}
-    timeline_rows.sort(
-        key=lambda r: (severity_order.get(r["severity"], 3), r["item_id"])
-    )
-
-    st.subheader("Timeline View")
-    st.markdown(
-        '<div class="timeline-intro">Timeline view shows whether system setup covers '
-        "the planned campaign period. Short, shifted or missing system lines indicate "
-        "readiness gaps.</div>"
-        '<div class="timeline-legend">'
-        '<span class="timeline-legend-item">'
-        '<span class="timeline-legend-swatch" style="background:var(--ink-2);opacity:0.25"></span>'
-        "Campaign line = planned campaign window"
-        "</span>"
-        '<span class="timeline-legend-item">'
-        '<span class="timeline-legend-swatch" style="background:var(--teal)"></span>'
-        "System lines = configured coverage"
-        "</span>"
-        '<span class="timeline-legend-item">'
-        '<span class="timeline-legend-swatch" style="background:var(--red)"></span>'
-        "Short, shifted or missing lines = readiness gaps"
-        "</span>"
-        "</div>",
-        unsafe_allow_html=True,
-    )
-
-    plan_left = date_to_pct(p_start)
-    plan_w = pct_width(p_start, p_end)
-    today_pct = date_to_pct(ANCHOR)
-
-    st.markdown("### At a glance")
-
-    h_rows = ""
-    for tr in timeline_rows:
-        sev = tr["severity"]
-        dot_color = SEVERITY_COLORS.get(sev, "#6B7280")
-        price_left = date_to_pct(tr["price_start"])
-        price_w = pct_width(tr["price_start"], tr["price_end"])
-        price_cls = f"tl-bar-price-{tr['price_status']}"
-        stock_pct = (
-            round(min(100, (tr["stock_on_hand"] / tr["forecast_demand"] * 100)), 1)
-            if tr["forecast_demand"] > 0
-            else 100
-        )
-        stock_cls = f"tl-bar-stock-{tr['stock_status']}"
-
-        price_seg = ""
-        if tr["price_status"] == "crit" or price_left is None:
-            price_seg = (
-                '<div class="tl-bar tl-bar-missing" style="left:0%;width:100%"></div>'
-            )
+        price_left, price_w = plan_left, plan_w
+        if sys_row is None or not sys_row["product_exists"]:
+            price_status = "missing"
         else:
-            price_seg = f'<div class="tl-bar {price_cls}" style="left:{price_left}%;width:{price_w}%"></div>'
+            price_s = sys_row["price_start"]
+            price_e = sys_row["price_end"]
+            sys_price = sys_row["system_price"]
+            if pd.isna(price_s) or sys_price == 0:
+                price_status = "missing"
+            else:
+                price_left, price_w = pct_width(price_s, price_e)
+                planned_price = float(row["planned_price"])
+                if price_s > p_start or price_e < p_end:
+                    price_status = "warn"
+                elif abs(sys_price - planned_price) > planned_price * 0.01:
+                    price_status = "warn"
 
-        stock_seg = (
-            f'<div class="tl-bar {stock_cls}" style="left:0%;width:{stock_pct}%"></div>'
-        )
+        tracks = [f'<div class="tl-track"><span class="lane-lbl">Plan</span><span class="tl-bar bar-plan" style="left:{plan_left}%;width:{plan_w}%"></span><span class="tl-today" style="left:{today_pct}%;"></span></div>']
+        if price_status == "missing":
+            tracks.append(f'<div class="tl-track"><span class="lane-lbl">System · missing</span><span class="tl-bar bar-missing" style="left:{plan_left}%;width:{plan_w}%"></span><span class="tl-today" style="left:{today_pct}%;"></span></div>')
+        else:
+            cls = "bar-price-ok" if price_status == "ok" else "bar-price-warn"
+            lbl = "Price · ok" if price_status == "ok" else "Price · gap"
+            tracks.append(f'<div class="tl-track"><span class="lane-lbl">{lbl}</span><span class="tl-bar {cls}" style="left:{price_left}%;width:{price_w}%"></span><span class="tl-today" style="left:{today_pct}%;"></span></div>')
 
-        issue_dots = ""
-        if tr["issues"]:
-            for issue in tr["issues"]:
-                ic = SEVERITY_COLORS.get(issue["severity"], "#6B7280")
-                issue_dots += f'<span class="tl-issue-dot" style="background:{ic}" title="{issue["issue_type"]}"></span>'
+        if channel == "webshop" and sys_row is not None and not sys_row["webshop_visible"]:
+            tracks.append(f'<div class="tl-track"><span class="lane-lbl">Visibility · hidden</span><span class="tl-bar bar-missing" style="left:{plan_left}%;width:{plan_w}%"></span><span class="tl-today" style="left:{today_pct}%;"></span></div>')
 
-        h_rows += f"""
-        <tr>
-          <td class="tl-label">
-            <span class="tl-dot" style="background:{dot_color}"></span>
-            <span class="tl-sku">{tr['item_id']}</span>
-            <span class="tl-name">{tr['product_name']}</span>
-            {issue_dots}
-          </td>
-          <td class="tl-track-cell">
-            <div class="tl-track">
-              <div class="tl-bar tl-bar-plan" style="left:{plan_left}%;width:{plan_w}%"></div>
-              {price_seg}
-              {stock_seg}
-              <div class="tl-marker" style="left:{today_pct}%"><div class="tl-marker-label">Today</div></div>
-            </div>
-          </td>
-        </tr>"""
+        if sys_row is not None:
+            stock = float(sys_row["stock_on_hand"]) if pd.notna(sys_row["stock_on_hand"]) else 0
+            forecast = float(sys_row["forecast_demand"]) if pd.notna(sys_row["forecast_demand"]) else 0
+            if forecast > 0 and stock < forecast:
+                stock_cls = "bar-stock-crit" if sys_row["stock_risk"] == "high" else "bar-stock-warn"
+                tracks.append(f'<div class="tl-track"><span class="lane-lbl">Stock · short</span><span class="tl-bar {stock_cls}" style="left:{plan_left}%;width:{plan_w}%"></span><span class="tl-today" style="left:{today_pct}%;"></span></div>')
 
-    date_marks = ""
-    for i in range(0, total_days + 1, max(1, total_days // 6)):
-        d = timeline_start + timedelta(days=i)
-        pct = round(i / total_days * 100, 1)
-        date_marks += f'<span style="position:absolute;left:{pct}%;top:-14px;font-family:var(--mono);font-size:8px;color:var(--ink-3);transform:translateX(-50%)">{str(d)[5:10]}</span>'
+        rows_html.append(f"""
+        <div class="tl-row-wrap">
+          <div class="sku-cell"><span class="sku">{item_id} · {_channel_short(channel)}</span><span class="nm">{product_name}</span></div>
+          <div class="tl-tracks">{''.join(tracks)}</div>
+          <div class="tl-status {severity}"><span class="pct">{pct_complete}%</span><span class="lbl">{status_label}</span></div>
+        </div>
+        """)
+
+    axis_marks = []
+    for i in range(0, 6):
+        pct = i * 20
+        d = timeline_start + timedelta(days=int(total_days * pct / 100))
+        if i == 0 or abs(pct - today_pct) > 8:
+            axis_marks.append(f'<span style="left:{pct}%">{d.strftime("%b %d")}</span>')
+    axis_marks.append(f'<span style="left:{today_pct}%" class="today-mark">{ANCHOR.strftime("%b %d")} · today</span>')
 
     html = f"""
-    <div class="tl-table-wrap">
-      <table class="tl-table">
-        <thead><tr><th class="tl-label-head">Item</th><th class="tl-track-head"><div style="position:relative;height:16px">{date_marks}</div></th></tr></thead>
-        <tbody>{h_rows}</tbody>
-      </table>
-      <div class="tl-table-legend">
-        <span><span class="tl-swatch tl-swatch-plan"></span> Plan window</span>
-        <span><span class="tl-swatch tl-swatch-price"></span> System price</span>
-        <span><span class="tl-swatch tl-swatch-stock"></span> Stock coverage</span>
-        <span><span class="tl-swatch tl-swatch-missing"></span> Missing / gap</span>
+    <section class="section">
+      <div class="section-head">
+        <div class="left">
+          <span class="eyebrow">04 — Timeline</span>
+          <h2>Items · plan vs system</h2>
+        </div>
+        <div class="right">
+          <span>Window · {timeline_start.strftime('%b %d')} → {timeline_end.strftime('%b %d')}</span>
+        </div>
       </div>
-    </div>
+      <div class="timeline">
+        <div class="tl-header">
+          <div>SKU · product</div>
+          <div class="tl-axis">{''.join(axis_marks)}</div>
+          <div style="text-align:right">Readiness</div>
+        </div>
+        {''.join(rows_html)}
+        <div class="tl-legend">
+          <span><span class="sw" style="background: rgba(15,17,22,.12);"></span>Plan window</span>
+          <span><span class="sw" style="background: var(--teal);"></span>Price ok</span>
+          <span><span class="sw" style="background: var(--amber);"></span>Price warning</span>
+          <span><span class="sw" style="background: var(--red);"></span>Critical</span>
+          <span><span class="sw" style="background: var(--green);"></span>Stock ok</span>
+          <span><span class="sw" style="background: repeating-linear-gradient(-45deg, var(--red-tint), var(--red-tint) 4px, var(--red-soft) 4px, var(--red-soft) 8px); border: 1px dashed var(--red);"></span>Missing</span>
+        </div>
+      </div>
+    </section>
     """
     st.markdown(html, unsafe_allow_html=True)
 
-    with st.expander("Detail cards"):
-        for tr in timeline_rows:
-            sev = tr["severity"]
-            sev_color = SEVERITY_COLORS.get(sev, "#6B7280")
-            card_class = (
-                "crit" if sev == "Critical" else ("warn" if sev == "Warning" else "ok")
-            )
 
-            price_left = date_to_pct(tr["price_start"])
-            price_w = pct_width(tr["price_start"], tr["price_end"])
-            price_bar_class = f"timeline-bar-price-{tr['price_status']}"
-
-            vis_left = date_to_pct(tr["price_start"])
-            vis_w = pct_width(tr["price_start"], tr["price_end"])
-            vis_bar_class = f"timeline-bar-vis-{tr['vis_status']}"
-
-            stock_pct = (
-                min(100, (tr["stock_on_hand"] / tr["forecast_demand"] * 100))
-                if tr["forecast_demand"] > 0
-                else 100
-            )
-            stock_bar_class = f"timeline-bar-stock-{tr['stock_status']}"
-
-            price_html = ""
-            if tr["price_status"] == "crit" or price_left is None:
-                price_html = (
-                    '<div class="timeline-bar timeline-bar-missing" '
-                    'style="left:0%;width:100%"></div>'
-                    '<span class="timeline-missing-label">[missing]</span>'
-                )
-            else:
-                price_html = (
-                    f'<div class="timeline-bar {price_bar_class}" '
-                    f'style="left:{price_left}%;width:{price_w}%"></div>'
-                )
-
-            vis_html = ""
-            if tr["vis_status"] == "crit":
-                vis_html = (
-                    '<div class="timeline-bar timeline-bar-missing" '
-                    'style="left:0%;width:100%"></div>'
-                    '<span class="timeline-missing-label">[hidden]</span>'
-                )
-            elif tr["vis_status"] == "warn":
-                vis_html = (
-                    f'<div class="timeline-bar {vis_bar_class}" '
-                    f'style="left:{vis_left}%;width:{vis_w}%"></div>'
-                )
-            else:
-                vis_html = (
-                    f'<div class="timeline-bar {vis_bar_class}" '
-                    f'style="left:{vis_left}%;width:{vis_w}%"></div>'
-                )
-
-            stock_html = (
-                f'<div class="timeline-bar {stock_bar_class}" '
-                f'style="left:0%;width:{stock_pct}%"></div>'
-            )
-
-            img_marker = (
-                '<span class="timeline-content-marker ready">image ready</span>'
-                if tr["image_ready"]
-                else '<span class="timeline-content-marker missing">image missing</span>'
-            )
-            ctn_marker = (
-                '<span class="timeline-content-marker ready">content ready</span>'
-                if tr["content_ready"]
-                else '<span class="timeline-content-marker missing">content missing</span>'
-            )
-
-            issue_tags_html = ""
-            if tr["issues"]:
-                tags = ""
-                for issue in tr["issues"]:
-                    isev = issue["severity"].lower()[:4]
-                    tags += (
-                        f'<span class="timeline-issue-tag {isev}">'
-                        f'{issue["issue_type"]}</span>'
-                    )
-                issue_tags_html = f'<div class="timeline-issues-row">{tags}</div>'
-
-            html = f"""
-            <div class="timeline-card {card_class}">
-              <div class="timeline-header">
-                <span class="timeline-severity" style="background:{sev_color}">{sev}</span>
-                <span class="timeline-sku">{tr['item_id']}</span>
-                <span class="timeline-product">{tr['product_name']}</span>
-              </div>
-              <div class="timeline-lane">
-                <div class="timeline-lane-label">Campaign plan</div>
-                <div class="timeline-track">
-                  <div class="timeline-bar timeline-bar-plan" style="left:{plan_left}%;width:{plan_w}%"></div>
-                  <div class="timeline-marker" style="left:{today_pct}%"><div class="timeline-marker-label">Today</div></div>
-                </div>
-              </div>
-              <div class="timeline-lane">
-                <div class="timeline-lane-label">System price</div>
-                <div class="timeline-track">{price_html}</div>
-              </div>
-              <div class="timeline-lane">
-                <div class="timeline-lane-label">Visibility</div>
-                <div class="timeline-track">{vis_html}</div>
-              </div>
-              <div class="timeline-lane">
-                <div class="timeline-lane-label">Stock coverage</div>
-                <div class="timeline-track">
-                  {stock_html}
-                  <span style="position:absolute;right:4px;top:0;font-size:9px;font-family:var(--mono);color:var(--ink-3);line-height:16px">{tr['stock_on_hand']}/{tr['forecast_demand']} ({tr['stock_risk']})</span>
-                </div>
-              </div>
-              <div class="timeline-lane">
-                <div class="timeline-lane-label">Content</div>
-                <div class="timeline-content-markers">{img_marker} {ctn_marker}</div>
-              </div>
-              {issue_tags_html}
-              <div class="timeline-dates">
-                <span>{str(timeline_start)[:10]}</span><span>{str(timeline_end)[:10]}</span>
-              </div>
-            </div>
-            """
-            st.markdown(html, unsafe_allow_html=True)
+# ============= handoff =============
+def _team_for(exc: dict) -> str:
+    issue = exc["issue_type"].lower()
+    owner = (exc.get("owner") or "").lower()
+    if "missing from system" in issue or "category" in issue or "not active" in issue:
+        return "Product Data"
+    if "visible" in issue or "image" in issue or "content" in issue:
+        return "E-commerce"
+    if "stock" in issue:
+        return "Inventory"
+    if "owner missing" in issue or "owner" in issue:
+        return "Campaign Owners"
+    if "price" in issue or "duplicate" in issue:
+        return "Pricing"
+    return "Campaign Owners"
 
 
-def render_plan_quality_cards(plan_issues: list[dict], campaign_id: str):
-    pq = [i for i in plan_issues if i["campaign_id"] == campaign_id]
-    if not pq:
-        return
-    st.subheader(f"Plan Quality Issues ({len(pq)})")
-    for issue in pq:
-        html = f"""
-        <div class="plan-quality-card">
-          <div class="pq-header">{issue['issue_type']}</div>
-          <div class="pq-detail"><strong>{issue['item_id']}</strong> &middot; {issue['product_name']} &middot; {issue['date_window']}</div>
-          <div class="pq-detail"><span class="exc-label">Risk</span> {issue['risk']}</div>
-          <div class="pq-action"><span class="exc-label">Action</span> {issue['action']}</div>
-        </div>
-        """
-        st.markdown(html, unsafe_allow_html=True)
+TEAM_ICONS = {
+    "Pricing": "€",
+    "Product Data": "▦",
+    "Inventory": "◫",
+    "E-commerce": "◉",
+    "Campaign Owners": "◐",
+}
+TEAM_ETAS = {
+    "Pricing": "~ 30m",
+    "Product Data": "~ 1h",
+    "Inventory": "~ 24h",
+    "E-commerce": "~ 2h",
+    "Campaign Owners": "~ 15m",
+}
 
 
-def render_exception_cards(exceptions: list[dict], view_mode: str):
-    if not exceptions:
-        st.info("No exceptions found. All campaign items match system state.")
-        return
-    st.subheader(f"Exception Cards ({len(exceptions)})")
-    origin_map = {
-        "Plan issue": "origin-plan",
-        "System issue": "origin-system",
-        "Cross-system mismatch": "origin-cross",
-        "Inferred/unplanned activity": "origin-inferred",
-    }
-    st.markdown(
-        '<div class="issue-origin-legend">'
-        '<span class="origin-badge origin-plan">Plan issue</span>'
-        '<span class="origin-badge origin-system">System issue</span>'
-        '<span class="origin-badge origin-cross">Cross-system mismatch</span>'
-        '<span class="origin-badge origin-inferred">Inferred/unplanned</span>'
-        "</div>",
-        unsafe_allow_html=True,
-    )
-    for idx, exc in enumerate(exceptions):
-        sev = exc["severity"]
-        color = SEVERITY_COLORS.get(sev, "#6B7280")
-        bg = {"Critical": "#FEF2F2", "Warning": "#FFFBEB", "OK": "#F0FDF4"}.get(
-            sev, "#F9FAFB"
-        )
-        border = {"Critical": "#FECACA", "Warning": "#FDE68A", "OK": "#BBF7D0"}.get(
-            sev, "#E5E7EB"
-        )
-        origin = exc.get("issue_origin", "")
-        origin_class = origin_map.get(origin, "")
-        origin_html = (
-            f'<span class="origin-badge {origin_class}">{origin}</span>'
-            if origin
-            else ""
-        )
-        decision_key = f"decision_{idx}"
-        current_decision = st.session_state.get(decision_key, "")
-        html = f"""
-        <div class="exception-card" style="border-left:4px solid {color}; background:{bg}; border:1px solid {border}">
-          <div class="exc-header">
-            <span class="exc-severity" style="background:{color}">{sev}</span>
-            <span class="exc-type">{exc['issue_type']}</span>
-            {origin_html}
+def render_handoff(exceptions: list[dict], focused_campaign_id: str):
+    in_scope = [e for e in exceptions if (focused_campaign_id == "ALL") or (e["campaign_id"] == focused_campaign_id)]
+    teams: dict[str, list[dict]] = {t: [] for t in ["Pricing", "Product Data", "Inventory", "E-commerce", "Campaign Owners"]}
+    for exc in in_scope:
+        teams[_team_for(exc)].append(exc)
+
+    cards = []
+    for team_name, items in teams.items():
+        crit = sum(1 for e in items if e["severity"] == "Critical")
+        sev_cls = "crit" if crit > 0 else ("warn" if items else "ok")
+        unit = "items to<br>fix" if team_name != "Campaign Owners" else "decisions<br>needed"
+        rows = []
+        for exc in items[:5]:
+            short_action = exc.get("action", "").split(" / ")[0]
+            rows.append(f"<li><span class=\"sku\">{exc['item_id']}</span><span>{short_action}</span></li>")
+        if not rows:
+            rows.append('<li><span class="sku">—</span><span style="color:var(--ink-4)">no items</span></li>')
+        more = ""
+        if len(items) > 5:
+            more = f'<li><span class="sku">+</span><span>{len(items) - 5} more</span></li>'
+        cards.append(f"""
+        <article class="team">
+          <div class="team-head">
+            <h4 class="team-name">{team_name}</h4>
+            <span class="team-icon">{TEAM_ICONS[team_name]}</span>
           </div>
-          <div class="exc-body">
-            <div class="exc-item"><strong>{exc['item_id']}</strong> / {exc['product_name']}</div>
-            <div class="exc-campaign">{exc['campaign_name']} . {exc['date_window']} . {exc['channel']}</div>
-            <div class="exc-values">
-              <div><span class="exc-label">Plan</span> {exc['plan_value']}</div>
-              <div><span class="exc-label">System</span> {exc['system_value']}</div>
-            </div>
-            <div class="exc-risk"><span class="exc-label">Risk</span> {exc['risk']}</div>
-            <div class="exc-owner"><span class="exc-label">Owner</span> {exc['owner']}</div>
-            <div class="exc-action"><span class="exc-label">Action</span> {exc['action']}</div>
-        """
-        if view_mode == "Technical":
-            html += f"""
-            <div class="exc-tech">
-              <div><span class="exc-label">Host status</span> Synthetic . Up</div>
-              <div><span class="exc-label">Module status</span> {sev}</div>
-              <div><span class="exc-label">Evidence source</span> Synthetic comparison engine</div>
-            </div>
-            """
-        html += "</div></div>"
-        st.markdown(html, unsafe_allow_html=True)
-        decision_options = [
-            "Fix before launch",
-            "Accept risk",
-            "Remove from campaign",
-            "Needs owner",
-            "Resolved",
-        ]
-        decision_classes = {
-            "Fix before launch": "fix",
-            "Accept risk": "accept",
-            "Remove from campaign": "remove",
-            "Needs owner": "owner",
-            "Resolved": "resolved",
-        }
-        cols = st.columns(len(decision_options))
-        for ci, opt in enumerate(decision_options):
-            dc = decision_classes[opt]
-            active_class = " active" if current_decision == opt else ""
-            with cols[ci]:
-                if st.button(
-                    opt, key=f"{decision_key}_{opt}", use_container_width=True
-                ):
-                    st.session_state[decision_key] = opt
-                    st.rerun()
-            if current_decision == opt:
-                st.markdown(
-                    f'<div style="text-align:center;font-family:var(--mono);font-size:10px;color:var(--green);margin-top:-8px">&#10003; Selected</div>',
-                    unsafe_allow_html=True,
-                )
-        st.markdown("<hr style='margin:8px 0;opacity:0.3'>", unsafe_allow_html=True)
+          <div class="team-count {sev_cls}"><span class="num">{len(items)}</span><span class="unit">{unit}</span></div>
+          <ul class="team-list">{''.join(rows)}{more}</ul>
+          <div class="team-cta"><a href="#">→ Route to {team_name}</a><span>{TEAM_ETAS[team_name]}</span></div>
+        </article>
+        """)
+
+    html = f"""
+    <section class="section">
+      <div class="section-head">
+        <div class="left">
+          <span class="eyebrow">05 — Routing</span>
+          <h2>Handoff payload <span class="muted">· by team</span></h2>
+        </div>
+        <div class="right"><span>{sum(len(v) for v in teams.values())} items total</span></div>
+      </div>
+      <div class="handoff">{''.join(cards)}</div>
+    </section>
+    """
+    st.markdown(html, unsafe_allow_html=True)
 
 
-def render_handoff_payload(exceptions: list[dict], selected_campaign: str | None):
-    st.subheader("Handoff Payload")
-    teams = {
-        "Pricing Team": [],
-        "Product Data Team": [],
-        "Inventory / Logistics": [],
-        "E-commerce / Channel": [],
-        "Campaign Owner": [],
-    }
-    for exc in exceptions:
-        if (
-            selected_campaign
-            and selected_campaign != "All"
-            and exc["campaign_id"] != selected_campaign
-        ):
-            continue
-        owner = exc["owner"]
-        if "Pricing" in owner:
-            teams["Pricing Team"].append(exc)
-        elif (
-            "Campaign" in owner
-            or "Sales" in owner
-            or "Local" in owner
-            or "Mail" in owner
-        ):
-            teams["Campaign Owner"].append(exc)
-        elif "stock" in exc["issue_type"].lower() or "Stock" in exc["issue_type"]:
-            teams["Inventory / Logistics"].append(exc)
-        elif (
-            "channel" in exc["issue_type"].lower()
-            or "visible" in exc["issue_type"].lower()
-            or "image" in exc["issue_type"].lower()
-            or "content" in exc["issue_type"].lower()
-        ):
-            teams["E-commerce / Channel"].append(exc)
-        else:
-            teams["Product Data Team"].append(exc)
-    team_tabs = st.tabs(list(teams.keys()))
-    for tab, (team, items) in zip(team_tabs, teams.items()):
-        with tab:
-            if not items:
-                st.caption("No items for this team.")
-                continue
-            payload = []
-            for exc in items:
-                payload.append(
-                    {
-                        "campaign_id": exc["campaign_id"],
-                        "campaign_name": exc["campaign_name"],
-                        "item_id": exc["item_id"],
-                        "issue_type": exc["issue_type"],
-                        "severity": exc["severity"],
-                        "plan_value": exc["plan_value"],
-                        "system_value": exc["system_value"],
-                        "recommended_action": exc["action"],
-                        "owner": exc["owner"],
-                        "timestamp": ANCHOR.isoformat(),
-                    }
-                )
-            st.caption(f"{len(payload)} items")
-            st.json(payload, expanded=False)
+# ============= footer =============
+def render_footer(plan: pd.DataFrame):
+    n_campaigns = plan["campaign_id"].nunique()
+    n_items = plan["item_id"].nunique()
+    html = f"""
+    <footer class="footer">
+      <div>Campaign Readiness · v2 · Streamlit</div>
+      <div>Plan vs System · {n_campaigns} campaigns · {n_items} SKUs</div>
+      <div>{ANCHOR.strftime('%a %d %b %Y')}</div>
+    </footer>
+    """
+    st.markdown(html, unsafe_allow_html=True)
 
 
+# ============= main =============
 def main():
-    st.set_page_config(page_title="Campaign Readiness Monitor", layout="wide")
+    st.set_page_config(page_title="Campaign Readiness Monitor", layout="wide", initial_sidebar_state="collapsed")
     st.markdown(load_design_css(), unsafe_allow_html=True)
-    st.markdown(
-        """
-    <div class="brand-bar">
-      <span class="brand">Campaign Readiness Monitor</span>
-      <span style="color:var(--ink-3);font-size:13px;font-family:var(--mono)">Specials display</span>
-    </div>
-    """,
-        unsafe_allow_html=True,
-    )
 
     plan = generate_campaign_plan()
     system = generate_system_truth()
     plan_issues = check_plan_quality(plan)
     exceptions = compare_plan_vs_system(plan, system)
-    campaigns_df = build_campaign_summary(plan, exceptions)
+    all_issues = exceptions + plan_issues
+    campaigns_df = build_campaign_summary(plan, all_issues)
 
     if "selected_campaign" not in st.session_state:
-        st.session_state.selected_campaign = None
-
-    with st.sidebar:
-        st.markdown("### Navigation")
-        if st.button("&#8592; All Campaigns", use_container_width=True):
-            st.session_state.selected_campaign = None
-            st.rerun()
-        st.divider()
-        st.markdown("### Filters")
-        view_mode = st.radio("View mode", ["Business", "Technical"], horizontal=True)
-        severity_filter = st.multiselect(
-            "Severity",
-            ["Critical", "Warning", "OK"],
-            default=["Critical", "Warning"],
-        )
-        channel_filter = st.multiselect(
-            "Channel",
-            CHANNELS,
-            default=CHANNELS,
-        )
-        origin_filter = st.multiselect(
-            "Issue origin",
-            [
-                "Plan issue",
-                "System issue",
-                "Cross-system mismatch",
-                "Inferred/unplanned activity",
-            ],
-            default=[
-                "Plan issue",
-                "System issue",
-                "Cross-system mismatch",
-                "Inferred/unplanned activity",
-            ],
-        )
-
-    if st.session_state.selected_campaign is None:
-        render_campaign_select(campaigns_df, plan, plan_issues, None)
-        campaign_ids = campaigns_df["campaign_id"].tolist()
-        cols = st.columns(len(campaign_ids))
-        for ci, cid in enumerate(campaign_ids):
-            with cols[ci]:
-                cname = campaigns_df[campaigns_df["campaign_id"] == cid][
-                    "campaign_name"
-                ].iloc[0]
-                if st.button(
-                    f"Review {cname}", key=f"select_{cid}", use_container_width=True
-                ):
-                    st.session_state.selected_campaign = cid
-                    st.rerun()
-        st.divider()
-        st.subheader("All Exceptions")
-        filtered = [
-            e
-            for e in exceptions
-            if e["severity"] in severity_filter
-            and e["channel"] in channel_filter
-            and e.get("issue_origin", "") in origin_filter
+        st.session_state.selected_campaign = campaigns_df.sort_values("planned_start").iloc[0]["campaign_id"]
+    if "view_mode" not in st.session_state:
+        st.session_state.view_mode = "Business"
+    if "severity_filter_state" not in st.session_state:
+        st.session_state.severity_filter_state = ["Critical", "Warning"]
+    if "origin_filter_state" not in st.session_state:
+        st.session_state.origin_filter_state = [
+            "Plan issue", "System issue", "Cross-system mismatch", "Inferred/unplanned activity",
         ]
-        render_exception_cards(filtered, view_mode)
-        st.divider()
-        render_handoff_payload(exceptions, "All")
-    else:
-        cid = st.session_state.selected_campaign
-        campaign_row = campaigns_df[campaigns_df["campaign_id"] == cid].iloc[0]
-        render_campaign_hero(campaign_row, plan, exceptions, plan_issues)
-        render_plan_quality_cards(plan_issues, cid)
-        render_timeline_view(plan, system, exceptions, cid)
-        st.divider()
-        filtered = [
-            e
-            for e in exceptions
-            if e["campaign_id"] == cid
-            and e["severity"] in severity_filter
-            and e["channel"] in channel_filter
-            and e.get("issue_origin", "") in origin_filter
-        ]
-        render_exception_cards(filtered, view_mode)
-        st.divider()
-        render_handoff_payload(exceptions, cid)
+
+    selected_id = st.session_state.selected_campaign
+    campaign_row = campaigns_df[campaigns_df["campaign_id"] == selected_id].iloc[0]
+    selected_slug = _campaign_slug(campaign_row["campaign_name"])
+
+    render_topbar(selected_slug, st.session_state.view_mode)
+    render_inspector(campaign_row, all_issues)
+    render_pipeline(plan, system, all_issues, selected_id)
+    render_kpis(plan, all_issues, campaigns_df)
+    render_campaign_cards(campaigns_df, selected_id)
+    render_exceptions_section(
+        all_issues,
+        plan,
+        system,
+        selected_id,
+        st.session_state.severity_filter_state,
+        st.session_state.origin_filter_state,
+    )
+    render_timeline(plan, system, all_issues, selected_id)
+    render_handoff(all_issues, selected_id)
+    render_footer(plan)
 
 
 if __name__ == "__main__":
