@@ -11,7 +11,8 @@ from textwrap import dedent as _dedent
 
 
 def _md(html: str) -> None:
-    getattr(st, "markdown")(_dedent(html).strip(), unsafe_allow_html=True)
+    cleaned = "\n".join(line.lstrip() for line in html.splitlines())
+    getattr(st, "markdown")(cleaned.strip(), unsafe_allow_html=True)
 
 
 SEVERITY_COLORS = {"Critical": "#DC2626", "Warning": "#D97706", "OK": "#059669"}
