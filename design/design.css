@@ -456,9 +456,14 @@ code, .mono {
 /* ============= CAMPAIGN ROW ============= */
 .campaigns {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 12px;
 }
+.camp.camp-all {
+  background: var(--surface-2);
+  border-style: dashed;
+}
+.camp.camp-all.selected { background: var(--surface); }
 .camp {
   background: var(--surface);
   border: 1px solid var(--line);
@@ -1143,6 +1148,70 @@ code, .mono {
   letter-spacing: .08em;
   text-transform: uppercase;
   color: var(--ink-4);
+}
+
+/* ============= Technical detail panel (Technical view) ============= */
+.tech-panel {
+  margin-top: 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 12px 14px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-2);
+}
+.tech-panel .tech-head {
+  font-size: 10px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--ink-4);
+  padding-bottom: 8px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--line);
+}
+.tech-panel .tech-row {
+  display: grid;
+  grid-template-columns: 160px 1fr;
+  gap: 12px;
+  padding: 3px 0;
+  border-bottom: 1px dashed var(--line);
+}
+.tech-panel .tech-row:last-child { border-bottom: 0; }
+.tech-panel .tech-key { color: var(--ink-4); }
+.tech-panel .tech-val { color: var(--ink); word-break: break-word; }
+
+/* ============= Decision tag (sticky after action click) ============= */
+.decision-tag {
+  margin: 12px 0 4px;
+  padding: 6px 10px;
+  border-radius: var(--r-sm);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0;
+  display: inline-block;
+}
+.decision-fix      { background: var(--blue-tint);  color: var(--blue);      border: 1px solid var(--blue-soft); }
+.decision-accept   { background: var(--amber-tint); color: var(--amber);     border: 1px solid var(--amber-soft); }
+.decision-reassign { background: var(--bg-2);       color: var(--ink-2);     border: 1px solid var(--line-2); }
+.decision-resolved { background: var(--green-tint); color: var(--green);     border: 1px solid var(--green-soft); }
+.decision-remove   { background: var(--red-tint);   color: var(--red);       border: 1px solid var(--red-soft); }
+
+/* ============= View-mode segmented control alignment (top bar) ============= */
+[data-testid="stHorizontalBlock"]:has(> [data-testid="stColumn"] [data-testid="stSegmentedControl"] [aria-label="View"]) [data-testid="stSegmentedControl"] {
+  margin-top: -52px;
+  margin-bottom: 8px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* ============= Chip-row filter segmented control ============= */
+.chip-row { margin: 6px 0 14px; }
+.chip-row + [data-testid="stHorizontalBlock"] [data-testid="stSegmentedControl"] button {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0;
+  padding: 4px 9px;
 }
 
 /* ============= Streamlit-rendered widget surface ============= */

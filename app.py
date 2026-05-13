@@ -17,6 +17,36 @@ def _md(html: str) -> None:
 
 SEVERITY_COLORS = {"Critical": "#DC2626", "Warning": "#D97706", "OK": "#059669"}
 
+ISSUE_CATEGORIES = ("plan", "pim", "price", "content", "stock", "channel", "owner", "unplanned", "other")
+
+
+def _categorize_issue(issue_type: str) -> str:
+    s = issue_type.lower()
+    if "missing from any plan" in s or "active but missing" in s:
+        return "unplanned"
+    if "missing from system" in s or "not active in target channel" in s or "missing from pim" in s:
+        return "pim"
+    if "price" in s or "duplicate / conflicting" in s:
+        return "price"
+    if "not visible in webshop" in s or "visible" in s:
+        return "channel"
+    if "image" in s or "content" in s or "category" in s:
+        return "content"
+    if "stock" in s:
+        return "stock"
+    if "owner" in s:
+        return "owner"
+    if "duplicate campaign item" in s or "missing sku" in s or "end date" in s or "in plan" in s:
+        return "plan"
+    return "other"
+
+
+def attach_categories(items: list[dict]) -> list[dict]:
+    for e in items:
+        if "issue_category" not in e:
+            e["issue_category"] = _categorize_issue(e.get("issue_type", ""))
+    return items
+
 
 def load_design_css():
     css_path = os.path.join(os.path.dirname(__file__), "design", "design.css")
@@ -790,7 +820,18 @@ def compare_plan_vs_system(plan: pd.DataFrame, system: pd.DataFrame) -> list[dic
             price_s = sys_row["price_start"]
             price_e = sys_row["price_end"]
             sys_owner = sys_row["owner"]
-            if len(sys_channel_rows) > 1:
+            active_sys_rows = sys_rows[
+                (sys_rows["system_price"] > 0) & sys_rows["price_start"].notna()
+            ]
+            if len(active_sys_rows) >= 2:
+                price_summary = " · ".join(
+                    f"{r['system_channel']} {r['system_price']:.2f} €"
+                    for _, r in active_sys_rows.iterrows()
+                )
+                if len(sys_channel_rows) > 1:
+                    sys_value = f"{len(sys_channel_rows)} price records in {channel}"
+                else:
+                    sys_value = f"Active in {len(active_sys_rows)} channels: {price_summary}"
                 exceptions.append(
                     {
                         "campaign_id": campaign_id,
@@ -801,11 +842,11 @@ def compare_plan_vs_system(plan: pd.DataFrame, system: pd.DataFrame) -> list[dic
                         "product_name": product_name,
                         "issue_type": "Duplicate / conflicting active prices",
                         "severity": "Critical",
-                        "plan_value": f"Price {planned_price:.2f}",
-                        "system_value": f"{len(sys_channel_rows)} price records in {channel}",
-                        "risk": "Multiple active prices cause checkout errors",
+                        "plan_value": f"Plan: {channel} at {planned_price:.2f} €",
+                        "system_value": sys_value,
+                        "risk": "Multiple active prices cause checkout errors or wrong-channel exposure",
                         "owner": planned_owner or sys_owner or "Unassigned",
-                        "action": "Resolve duplicate pricing, keep one active record",
+                        "action": "Keep one canonical price per channel; remove stale records",
                         "date_window": f"{p_start.date()} - {p_end.date()}",
                         "issue_origin": "System issue",
                     }
@@ -1097,18 +1138,17 @@ def compute_pipeline_stages(plan: pd.DataFrame, system: pd.DataFrame, exceptions
         scope_exc = exceptions
     total = scope_plan["item_id"].nunique() if not scope_plan.empty else 0
 
-    def _count_exc(matchers: list[str]) -> tuple[int, int]:
-        crit = sum(1 for e in scope_exc if any(m in e["issue_type"] for m in matchers) and e["severity"] == "Critical")
-        warn = sum(1 for e in scope_exc if any(m in e["issue_type"] for m in matchers) and e["severity"] == "Warning")
+    def _count_cat(*cats: str) -> tuple[int, int]:
+        cat_set = set(cats)
+        crit = sum(1 for e in scope_exc if e.get("issue_category") in cat_set and e["severity"] == "Critical")
+        warn = sum(1 for e in scope_exc if e.get("issue_category") in cat_set and e["severity"] == "Warning")
         return crit, warn
 
-    pim_crit, pim_warn = _count_exc(["missing from system", "not active in target channel"])
-    price_crit, price_warn = _count_exc([
-        "Price mismatch", "starts too late", "ends too early", "Duplicate", "price missing", "Missing or zero price"
-    ])
-    content_crit, content_warn = _count_exc(["Missing image / content", "Missing category", "Wrong category"])
-    stock_crit, stock_warn = _count_exc(["Stock below forecast"])
-    channel_crit, channel_warn = _count_exc(["not visible in webshop", "not active in target channel"])
+    pim_crit, pim_warn = _count_cat("pim")
+    price_crit, price_warn = _count_cat("price")
+    content_crit, content_warn = _count_cat("content")
+    stock_crit, stock_warn = _count_cat("stock")
+    channel_crit, channel_warn = _count_cat("channel")
 
     def _status(crit: int, warn: int) -> str:
         if crit > 0:
@@ -1152,10 +1192,8 @@ def compute_pipeline_stages(plan: pd.DataFrame, system: pd.DataFrame, exceptions
 
 
 # ============= top bar =============
-def render_topbar(selected_slug: str, view_mode: str):
+def render_topbar(selected_slug: str, view_mode: str) -> str:
     crumb = f'<span class="cur">{selected_slug}</span>'
-    seg_business = "on" if view_mode == "Business" else ""
-    seg_tech = "on" if view_mode == "Technical" else ""
     sync_text = f"Synced just now · {ANCHOR.strftime('%b %d, %Y')}"
     html = f"""
     <header class="topbar">
@@ -1171,16 +1209,66 @@ def render_topbar(selected_slug: str, view_mode: str):
       </div>
       <div class="top-spacer"></div>
       <div class="sync-pill"><span class="pulse"></span>{sync_text}</div>
-      <div class="seg">
-        <span class="seg-btn {seg_business}">Business</span>
-        <span class="seg-btn {seg_tech}">Technical</span>
-      </div>
+      <div class="topbar-view-anchor"></div>
     </header>
+    """
+    _md(html)
+    # Functional view-mode toggle, rendered just below the visual topbar
+    cols = st.columns([10, 2])
+    with cols[1]:
+        new_mode = st.segmented_control(
+            "View",
+            options=["Business", "Technical"],
+            default=view_mode,
+            key="view_mode_toggle",
+            label_visibility="collapsed",
+        )
+    if new_mode and new_mode != view_mode:
+        st.session_state.view_mode = new_mode
+        st.rerun()
+    return new_mode or view_mode
+
+
+# ============= inspector header =============
+def render_inspector_all(plan: pd.DataFrame, campaigns_df: pd.DataFrame, exceptions: list[dict]):
+    n_campaigns = len(campaigns_df)
+    total_items = plan["item_id"].nunique()
+    crit = sum(1 for e in exceptions if e["severity"] == "Critical")
+    warn = sum(1 for e in exceptions if e["severity"] == "Warning")
+    if crit > 0:
+        status_color = "var(--red)"
+        status_text = f"● {crit} critical issues across the portfolio"
+    elif warn > 0:
+        status_color = "var(--amber)"
+        status_text = f"● {warn} warnings, no criticals"
+    else:
+        status_color = "var(--green)"
+        status_text = "● All campaigns ready"
+    first_start = pd.Timestamp(campaigns_df["planned_start"].min()).date()
+    last_end = pd.Timestamp(campaigns_df["planned_end"].max()).date()
+    html = f"""
+    <section class="inspector">
+      <div class="insp-left">
+        <div class="insp-eyebrow">
+          <span>ALL</span><span class="dot"></span>
+          <span>Portfolio view</span><span class="dot"></span>
+          <span>{ANCHOR.strftime('%a %b %d, %Y')}</span>
+        </div>
+        <h1 class="insp-title">
+          All campaigns
+          <span class="id">{n_campaigns} campaigns</span>
+        </h1>
+        <div class="insp-meta">
+          <span><label>Window</label>{first_start.strftime('%b %d')} → {last_end.strftime('%b %d')}</span>
+          <span><label>Items</label>{total_items} SKUs</span>
+          <span><label>Status</label><span style="color:{status_color};font-weight:500">{status_text}</span></span>
+        </div>
+      </div>
+    </section>
     """
     _md(html)
 
 
-# ============= inspector header =============
 def render_inspector(campaign_row, exceptions: list[dict]):
     cid = campaign_row["campaign_id"]
     crit = int(campaign_row.get("critical_count", 0))
@@ -1437,6 +1525,45 @@ def render_campaign_cards(campaigns_df: pd.DataFrame, selected_id: str):
         </article>
         """)
 
+    # Portfolio (All campaigns) pseudo-card
+    portfolio_total = int(sorted_df["item_count"].sum())
+    portfolio_crit = int(sorted_df["critical_count"].sum())
+    portfolio_warn = int(sorted_df["warning_count"].sum())
+    portfolio_ready = int(sorted_df["ready_items"].sum())
+    portfolio_pct = (
+        int(round(portfolio_ready / portfolio_total * 100)) if portfolio_total else 0
+    )
+    portfolio_ok_pct = round(portfolio_ready / portfolio_total * 100, 1) if portfolio_total else 0
+    portfolio_warn_pct = round(portfolio_warn / portfolio_total * 100, 1) if portfolio_total else 0
+    portfolio_crit_pct = max(round(100 - portfolio_ok_pct - portfolio_warn_pct, 1), 0)
+    all_selected = " selected" if selected_id == "ALL" else ""
+    portfolio_card = f"""
+    <article class="camp camp-all{all_selected}">
+      <div class="camp-top">
+        <span class="camp-id">ALL · Portfolio</span>
+        <span class="sel-tag">In focus</span>
+      </div>
+      <div class="camp-name">All campaigns</div>
+      <div class="camp-meta">
+        <span><label>N</label>{len(sorted_df)} campaigns</span>
+        <span><label>SKUs</label>{portfolio_total}</span>
+      </div>
+      <div class="camp-bar">
+        <span class="bar-ok"   style="width:{portfolio_ok_pct}%"></span>
+        <span class="bar-warn" style="width:{portfolio_warn_pct}%"></span>
+        <span class="bar-crit" style="width:{portfolio_crit_pct}%"></span>
+      </div>
+      <div class="camp-foot">
+        <span class="pct">{portfolio_pct}%</span>
+        <span class="camp-stats">
+          <span class="s"><span class="d d-ok"></span>{portfolio_ready}</span>
+          <span class="s"><span class="d d-warn"></span>{portfolio_warn}</span>
+          <span class="s"><span class="d d-crit"></span>{portfolio_crit}</span>
+        </span>
+      </div>
+    </article>
+    """
+
     section_head = """
     <section class="section">
       <div class="section-head">
@@ -1445,17 +1572,23 @@ def render_campaign_cards(campaigns_df: pd.DataFrame, selected_id: str):
           <h2>{n} in flight or queued</h2>
         </div>
         <div class="right">
-          <span>Sorted by start date</span>
+          <span>Sorted by start date · click to focus</span>
         </div>
       </div>
     """.replace("{n}", str(len(sorted_df)))
 
-    _md(section_head + f'<div class="campaigns">{"".join(cards_html)}</div></section>')
+    _md(section_head + f'<div class="campaigns">{portfolio_card}{"".join(cards_html)}</div></section>')
 
     # Functional buttons row beneath the cards for selection
     _md('<div class="invisible-btn-row" style="margin-top:8px">')
-    cols = st.columns(len(sorted_df))
-    for ci, (_, row) in enumerate(sorted_df.iterrows()):
+    n_cols = len(sorted_df) + 1
+    cols = st.columns(n_cols)
+    with cols[0]:
+        label = "● All in focus" if selected_id == "ALL" else "Show all"
+        if st.button(label, key="camp_select_ALL", use_container_width=True):
+            st.session_state.selected_campaign = "ALL"
+            st.rerun()
+    for ci, (_, row) in enumerate(sorted_df.iterrows(), start=1):
         with cols[ci]:
             label = "● In focus" if row["campaign_id"] == selected_id else f"Focus {row['campaign_id']}"
             if st.button(label, key=f"camp_select_{row['campaign_id']}", use_container_width=True):
@@ -1485,6 +1618,7 @@ def _build_diff_rows(focus: dict, plan_row, sys_row) -> list[dict]:
         sys_vis = bool(sys_row["webshop_visible"])
         rows.append({
             "field": "Visibility",
+            "category": "channel",
             "plan_v": "visible" if p_visible else "hidden",
             "plan_src": f"planned_visibility · {str(p_visible).lower()}",
             "sys_v": "hidden" if not sys_vis else "visible",
@@ -1494,18 +1628,18 @@ def _build_diff_rows(focus: dict, plan_row, sys_row) -> list[dict]:
     if sys_row is not None:
         img_ready = bool(sys_row["image_ready"])
         content_ready = bool(sys_row["content_ready"])
-        if not img_ready or not content_ready:
-            missing = []
-            if not img_ready: missing.append("image")
-            if not content_ready: missing.append("content")
-            rows.append({
-                "field": "Content",
-                "plan_v": "ready expected",
-                "plan_src": "required for launch",
-                "sys_v": f"missing {', '.join(missing)}",
-                "sys_src": f"image_ready · {str(img_ready).lower()}",
-                "sys_status": "warn",
-            })
+        missing = []
+        if not img_ready: missing.append("image")
+        if not content_ready: missing.append("content")
+        rows.append({
+            "field": "Content",
+            "category": "content",
+            "plan_v": "ready expected",
+            "plan_src": "required for launch",
+            "sys_v": f"missing {', '.join(missing)}" if missing else "ready",
+            "sys_src": f"image_ready · {str(img_ready).lower()}",
+            "sys_status": "warn" if missing else "ok",
+        })
     if sys_row is not None:
         stock = int(sys_row["stock_on_hand"]) if pd.notna(sys_row["stock_on_hand"]) else 0
         forecast = int(sys_row["forecast_demand"]) if pd.notna(sys_row["forecast_demand"]) else 0
@@ -1513,6 +1647,7 @@ def _build_diff_rows(focus: dict, plan_row, sys_row) -> list[dict]:
             status = "warn" if stock < forecast else "ok"
             rows.append({
                 "field": "Stock",
+                "category": "stock",
                 "plan_v": f"{forecast} forecast",
                 "plan_src": f"forecast_demand · {forecast}",
                 "sys_v": f"{stock} on hand",
@@ -1526,6 +1661,7 @@ def _build_diff_rows(focus: dict, plan_row, sys_row) -> list[dict]:
             status = "ok" if abs(sys_price - planned_price) <= planned_price * 0.01 else "warn"
             rows.append({
                 "field": "Price",
+                "category": "price",
                 "plan_v": f"{planned_price:.2f} €",
                 "plan_src": "planned_price",
                 "sys_v": f"{sys_price:.2f} €",
@@ -1535,6 +1671,7 @@ def _build_diff_rows(focus: dict, plan_row, sys_row) -> list[dict]:
         else:
             rows.append({
                 "field": "Price",
+                "category": "price",
                 "plan_v": f"{planned_price:.2f} €",
                 "plan_src": "planned_price",
                 "sys_v": "no record",
@@ -1544,13 +1681,28 @@ def _build_diff_rows(focus: dict, plan_row, sys_row) -> list[dict]:
     else:
         rows.append({
             "field": "SKU",
+            "category": "pim",
             "plan_v": focus["item_id"],
             "plan_src": "planned in campaign",
             "sys_v": "not found",
             "sys_src": "no system record",
             "sys_status": "bad",
         })
-    return rows
+
+    # Prioritize: focus category first, then any row that's not ok, then the rest.
+    focus_cat = focus.get("issue_category", "other")
+    def _priority(row):
+        if row["category"] == focus_cat:
+            return 0
+        if row["sys_status"] != "ok":
+            return 1
+        return 2
+    rows.sort(key=_priority)
+    # Drop rows that are ok and unrelated to focus, to cut noise (keep first 4)
+    pruned = [r for r in rows if (r["category"] == focus_cat or r["sys_status"] != "ok")]
+    if not pruned:
+        pruned = rows[:1]
+    return pruned[:4]
 
 
 def _suggested_step(focus: dict, sys_row) -> str:
@@ -1576,7 +1728,7 @@ def _suggested_step(focus: dict, sys_row) -> str:
     return focus.get("action", "Review and decide on next step.")
 
 
-def render_focus_card(focus: dict | None, plan: pd.DataFrame, system: pd.DataFrame, queue_remaining: int):
+def render_focus_card(focus: dict | None, plan: pd.DataFrame, system: pd.DataFrame, queue_remaining: int, view_mode: str = "Business"):
     if focus is None:
         _md("""
         <article class="focus">
@@ -1699,6 +1851,48 @@ def render_focus_card(focus: dict | None, plan: pd.DataFrame, system: pd.DataFra
     """
     _md(html)
 
+    if view_mode == "Technical":
+        tech_rows = [
+            ("issue_type", focus.get("issue_type")),
+            ("issue_category", focus.get("issue_category")),
+            ("issue_origin", focus.get("issue_origin")),
+            ("severity", focus.get("severity")),
+            ("campaign_id", focus.get("campaign_id")),
+            ("channel", focus.get("channel")),
+            ("item_id", focus.get("item_id")),
+            ("plan_value", focus.get("plan_value")),
+            ("system_value", focus.get("system_value")),
+            ("recommended_action", focus.get("action")),
+        ]
+        tech_html = "".join(
+            f'<div class="tech-row"><span class="tech-key">{k}</span><span class="tech-val">{v}</span></div>'
+            for k, v in tech_rows if v is not None
+        )
+        _md(f'<div class="tech-panel"><div class="tech-head">Technical detail · raw exception payload</div>{tech_html}</div>')
+
+
+def render_action_buttons(focus: dict | None, view_mode: str = "Business"):
+    if focus is None:
+        return
+    decision_key = f"decision::{focus.get('campaign_id')}::{focus.get('item_id')}::{focus.get('issue_category', 'other')}"
+    current = st.session_state.get(decision_key, "")
+    options = [
+        ("fix", "Fix", "primary"),
+        ("accept", "Accept risk", ""),
+        ("reassign", "Reassign", ""),
+        ("resolved", "Mark resolved", ""),
+        ("remove", "Remove", "danger"),
+    ]
+    if current:
+        _md(f'<div class="decision-tag decision-{current}">● Decision: {current}</div>')
+    cols = st.columns(len(options))
+    for ci, (slug, label, kind) in enumerate(options):
+        with cols[ci]:
+            btn_type = "primary" if (kind == "primary" and not current) else "secondary"
+            if st.button(label, key=f"{decision_key}::{slug}", type=btn_type, use_container_width=True):
+                st.session_state[decision_key] = slug
+                st.rerun()
+
 
 def render_queue_cards(queue: list[dict]):
     items_html = []
@@ -1746,6 +1940,7 @@ def _resolve_date(date_window: str):
 
 
 def render_exception_rail(exceptions: list[dict], focus_item: str | None):
+    exceptions = [e for e in exceptions if e.get("item_id") not in ("MISSING", "N/A", None, "")]
     if not exceptions:
         return
     minis = []
@@ -1783,9 +1978,13 @@ def render_exceptions_section(
     focused_campaign_id: str,
     severity_filter: list[str],
     origin_filter: list[str],
+    view_mode: str = "Business",
 ):
     cid_filter = lambda e: (focused_campaign_id == "ALL") or (e["campaign_id"] == focused_campaign_id)
-    in_scope = [e for e in exceptions_all if cid_filter(e)]
+    in_scope = [
+        e for e in exceptions_all
+        if cid_filter(e) and e.get("item_id") not in ("MISSING", "N/A", None, "")
+    ]
     in_scope.sort(key=lambda e: (SEVERITY_ORDER.get(e["severity"], 9), e.get("item_id", "")))
 
     filtered = [
@@ -1812,44 +2011,67 @@ def render_exceptions_section(
         <div class="right"><span>Showing {len(filtered)} / {len(in_scope)}</span></div>
       </div>
     """
-    chips_html = f"""
-      <div class="filterbar">
-        <span class="chip {'on' if set(severity_filter) == {'Critical', 'Warning', 'OK'} else ''}">All <span class="ct">{len(in_scope)}</span></span>
-        <span class="chip"><span class="d d-crit"></span>Critical <span class="ct">{crit_n}</span></span>
-        <span class="chip"><span class="d d-warn"></span>Warning <span class="ct">{warn_n}</span></span>
-        <span class="chip-sep"></span>
-        <span class="chip">Plan issue <span class="ct">{origins['Plan issue']}</span></span>
-        <span class="chip">System <span class="ct">{origins['System issue']}</span></span>
-        <span class="chip">Cross-system <span class="ct">{origins['Cross-system mismatch']}</span></span>
-        <span class="chip">Inferred <span class="ct">{origins['Inferred/unplanned activity']}</span></span>
-      </div>
-    """
-    _md(section_head + chips_html)
+    _md(section_head)
 
-    # functional filter controls below the visual chips
-    fc1, fc2 = st.columns([1, 1])
+    # Functional chip filters via segmented_control (multi)
+    _md('<div class="chip-row">')
+    fc1, fc2 = st.columns([1, 2])
     with fc1:
-        new_sev = st.multiselect(
+        sev_options = [f"Critical · {crit_n}", f"Warning · {warn_n}"]
+        sev_label_to_value = {f"Critical · {crit_n}": "Critical", f"Warning · {warn_n}": "Warning"}
+        current_sev_labels = [lbl for lbl, val in sev_label_to_value.items() if val in severity_filter]
+        new_sev_labels = st.segmented_control(
             "Severity",
-            ["Critical", "Warning", "OK"],
-            default=severity_filter,
-            key="sev_filter",
+            options=sev_options,
+            default=current_sev_labels,
+            selection_mode="multi",
+            key="sev_chip_filter",
             label_visibility="collapsed",
-            placeholder="Filter severity",
-        )
+        ) or []
+        new_sev = [sev_label_to_value[lbl] for lbl in new_sev_labels]
+        if "OK" in severity_filter:
+            new_sev.append("OK")
     with fc2:
-        new_origin = st.multiselect(
-            "Issue origin",
-            ["Plan issue", "System issue", "Cross-system mismatch", "Inferred/unplanned activity"],
-            default=origin_filter,
-            key="origin_filter",
+        origin_options = [
+            f"Plan · {origins['Plan issue']}",
+            f"System · {origins['System issue']}",
+            f"Cross-system · {origins['Cross-system mismatch']}",
+            f"Inferred · {origins['Inferred/unplanned activity']}",
+        ]
+        origin_label_to_value = {
+            origin_options[0]: "Plan issue",
+            origin_options[1]: "System issue",
+            origin_options[2]: "Cross-system mismatch",
+            origin_options[3]: "Inferred/unplanned activity",
+        }
+        current_origin_labels = [lbl for lbl, val in origin_label_to_value.items() if val in origin_filter]
+        new_origin_labels = st.segmented_control(
+            "Origin",
+            options=origin_options,
+            default=current_origin_labels,
+            selection_mode="multi",
+            key="origin_chip_filter",
             label_visibility="collapsed",
-            placeholder="Filter origin",
-        )
-    if new_sev != severity_filter or new_origin != origin_filter:
+        ) or []
+        new_origin = [origin_label_to_value[lbl] for lbl in new_origin_labels]
+    _md('</div>')
+
+    # Empty filter selection means "show all", to match natural chip UX
+    if not new_sev:
+        new_sev = ["Critical", "Warning", "OK"]
+    if not new_origin:
+        new_origin = ["Plan issue", "System issue", "Cross-system mismatch", "Inferred/unplanned activity"]
+
+    if sorted(new_sev) != sorted(severity_filter) or sorted(new_origin) != sorted(origin_filter):
         st.session_state.severity_filter_state = new_sev
         st.session_state.origin_filter_state = new_origin
         st.rerun()
+
+    # Re-apply filtering using updated state so the current frame already reflects clicks
+    filtered = [
+        e for e in in_scope
+        if e["severity"] in new_sev and e.get("issue_origin", "") in new_origin
+    ]
 
     if not filtered:
         _md('<div class="queue-more">No exceptions match the current filters.</div>')
@@ -1863,7 +2085,8 @@ def render_exceptions_section(
     _md('<div class="exc-grid">')
     col_focus, col_queue = st.columns([3, 2], gap="small")
     with col_focus:
-        render_focus_card(focus, plan, system, queue_remaining + len(queue))
+        render_focus_card(focus, plan, system, queue_remaining + len(queue), view_mode=view_mode)
+        render_action_buttons(focus, view_mode=view_mode)
     with col_queue:
         render_queue_cards(queue)
         if queue_remaining > 0:
@@ -2009,20 +2232,21 @@ def render_timeline(plan: pd.DataFrame, system: pd.DataFrame, exceptions: list[d
 
 
 # ============= handoff =============
+CATEGORY_TO_TEAM = {
+    "pim": "Product Data",
+    "content": "E-commerce",
+    "channel": "E-commerce",
+    "stock": "Inventory",
+    "owner": "Campaign Owners",
+    "price": "Pricing",
+    "plan": "Campaign Owners",
+    "unplanned": "Campaign Owners",
+    "other": "Campaign Owners",
+}
+
+
 def _team_for(exc: dict) -> str:
-    issue = exc["issue_type"].lower()
-    owner = (exc.get("owner") or "").lower()
-    if "missing from system" in issue or "category" in issue or "not active" in issue:
-        return "Product Data"
-    if "visible" in issue or "image" in issue or "content" in issue:
-        return "E-commerce"
-    if "stock" in issue:
-        return "Inventory"
-    if "owner missing" in issue or "owner" in issue:
-        return "Campaign Owners"
-    if "price" in issue or "duplicate" in issue:
-        return "Pricing"
-    return "Campaign Owners"
+    return CATEGORY_TO_TEAM.get(exc.get("issue_category", "other"), "Campaign Owners")
 
 
 TEAM_ICONS = {
@@ -2111,8 +2335,11 @@ def main():
     system = generate_system_truth()
     plan_issues = check_plan_quality(plan)
     exceptions = compare_plan_vs_system(plan, system)
+    attach_categories(exceptions)
+    attach_categories(plan_issues)
     all_issues = exceptions + plan_issues
     campaigns_df = build_campaign_summary(plan, all_issues)
+    real_skus = set(plan["item_id"].dropna().astype(str).unique())
 
     if "selected_campaign" not in st.session_state:
         ranked = campaigns_df.copy()
@@ -2132,11 +2359,24 @@ def main():
         ]
 
     selected_id = st.session_state.selected_campaign
-    campaign_row = campaigns_df[campaigns_df["campaign_id"] == selected_id].iloc[0]
-    selected_slug = _campaign_slug(campaign_row["campaign_name"])
+    is_portfolio = selected_id == "ALL"
+    if is_portfolio:
+        selected_slug = "all-campaigns"
+        campaign_row = None
+    else:
+        match = campaigns_df[campaigns_df["campaign_id"] == selected_id]
+        if match.empty:
+            # Selection became stale; fall back to portfolio view
+            st.session_state.selected_campaign = "ALL"
+            st.rerun()
+        campaign_row = match.iloc[0]
+        selected_slug = _campaign_slug(campaign_row["campaign_name"])
 
-    render_topbar(selected_slug, st.session_state.view_mode)
-    render_inspector(campaign_row, all_issues)
+    view_mode = render_topbar(selected_slug, st.session_state.view_mode)
+    if is_portfolio:
+        render_inspector_all(plan, campaigns_df, all_issues)
+    else:
+        render_inspector(campaign_row, all_issues)
     render_pipeline(plan, system, all_issues, selected_id)
     render_kpis(plan, all_issues, campaigns_df)
     render_campaign_cards(campaigns_df, selected_id)
@@ -2147,6 +2387,7 @@ def main():
         selected_id,
         st.session_state.severity_filter_state,
         st.session_state.origin_filter_state,
+        view_mode=view_mode,
     )
     render_timeline(plan, system, all_issues, selected_id)
     render_handoff(all_issues, selected_id)
