@@ -7,6 +7,13 @@ import json
 
 ANCHOR = date(2026, 6, 1)
 CHANNELS = ["webshop", "B2B", "mail order", "local store"]
+from textwrap import dedent as _dedent
+
+
+def _md(html: str) -> None:
+    getattr(st, "markdown")(_dedent(html).strip(), unsafe_allow_html=True)
+
+
 SEVERITY_COLORS = {"Critical": "#DC2626", "Warning": "#D97706", "OK": "#059669"}
 
 
@@ -1121,17 +1128,23 @@ def compute_pipeline_stages(plan: pd.DataFrame, system: pd.DataFrame, exceptions
             "hint": hint,
         }
 
+    svg_plan = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" width="16" height="16"><rect x="3" y="3.5" width="10" height="9" rx="1.5"/><path d="M3 7h10M7 3.5v9"/></svg>'
+    svg_pim = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" width="16" height="16"><path d="M3 6l5-3 5 3v4l-5 3-5-3z"/><path d="M3 6l5 3 5-3M8 9v4"/></svg>'
+    svg_price = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" width="16" height="16"><circle cx="8" cy="8" r="5.5"/><path d="M8 4.5v3.5l2.5 1.5"/></svg>'
+    svg_content = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" width="16" height="16"><rect x="2.5" y="4" width="11" height="8" rx="1"/><path d="M5 4V2.5h6V4M5 8h6"/></svg>'
+    svg_inventory = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" width="16" height="16"><path d="M3 5l5-2.5L13 5v6L8 13.5 3 11z"/><path d="M3 5l5 2.5L13 5M8 7.5v6"/></svg>'
+    svg_channel = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" width="16" height="16"><circle cx="8" cy="8" r="5.5"/><path d="M2.5 8h11M8 2.5c2 2 2 9 0 11M8 2.5c-2 2-2 9 0 11"/></svg>'
     stages = [
-        _stage("01 · Plan", "P", total, 0, 0, "all logged"),
-        _stage("02 · Product (PIM)", "M", max(total - pim_crit, 0), pim_crit, pim_warn,
+        _stage("01 · Plan", svg_plan, total, 0, 0, "all logged"),
+        _stage("02 · Product (PIM)", svg_pim, max(total - pim_crit, 0), pim_crit, pim_warn,
                f"{pim_crit} missing from PIM" if pim_crit else "all items found"),
-        _stage("03 · Pricing", "$", max(total - price_crit - price_warn, 0), price_crit, price_warn,
+        _stage("03 · Pricing", svg_price, max(total - price_crit - price_warn, 0), price_crit, price_warn,
                f"{price_crit + price_warn} pricing issues" if (price_crit + price_warn) else "prices aligned"),
-        _stage("04 · Content", "C", max(total - content_crit - content_warn, 0), content_crit, content_warn,
+        _stage("04 · Content", svg_content, max(total - content_crit - content_warn, 0), content_crit, content_warn,
                f"{content_crit + content_warn} content gaps" if (content_crit + content_warn) else "ready"),
-        _stage("05 · Inventory", "I", max(total - stock_crit - stock_warn, 0), stock_crit, stock_warn,
+        _stage("05 · Inventory", svg_inventory, max(total - stock_crit - stock_warn, 0), stock_crit, stock_warn,
                f"{stock_crit + stock_warn} below forecast" if (stock_crit + stock_warn) else "stock ok"),
-        _stage("06 · Channel", "Ch", max(total - channel_crit - channel_warn, 0), channel_crit, channel_warn,
+        _stage("06 · Channel", svg_channel, max(total - channel_crit - channel_warn, 0), channel_crit, channel_warn,
                f"{channel_crit + channel_warn} channel issues" if (channel_crit + channel_warn) else "live"),
     ]
     return stages
@@ -1163,7 +1176,7 @@ def render_topbar(selected_slug: str, view_mode: str):
       </div>
     </header>
     """
-    st.markdown(html, unsafe_allow_html=True)
+    _md(html)
 
 
 # ============= inspector header =============
@@ -1215,7 +1228,7 @@ def render_inspector(campaign_row, exceptions: list[dict]):
       </div>
     </section>
     """
-    st.markdown(html, unsafe_allow_html=True)
+    _md(html)
 
 
 # ============= pipeline =============
@@ -1272,7 +1285,7 @@ def render_pipeline(plan: pd.DataFrame, system: pd.DataFrame, exceptions: list[d
       </div>
     </div>
     """
-    st.markdown(html, unsafe_allow_html=True)
+    _md(html)
 
 
 # ============= KPIs =============
@@ -1355,7 +1368,7 @@ def render_kpis(plan: pd.DataFrame, exceptions: list[dict], campaigns_df: pd.Dat
       </div>
     </section>
     """
-    st.markdown(html, unsafe_allow_html=True)
+    _md(html)
 
 
 # ============= campaign cards =============
@@ -1436,10 +1449,10 @@ def render_campaign_cards(campaigns_df: pd.DataFrame, selected_id: str):
       </div>
     """.replace("{n}", str(len(sorted_df)))
 
-    st.markdown(section_head + f'<div class="campaigns">{"".join(cards_html)}</div></section>', unsafe_allow_html=True)
+    _md(section_head + f'<div class="campaigns">{"".join(cards_html)}</div></section>')
 
     # Functional buttons row beneath the cards for selection
-    st.markdown('<div class="invisible-btn-row" style="margin-top:8px">', unsafe_allow_html=True)
+    _md('<div class="invisible-btn-row" style="margin-top:8px">')
     cols = st.columns(len(sorted_df))
     for ci, (_, row) in enumerate(sorted_df.iterrows()):
         with cols[ci]:
@@ -1447,7 +1460,7 @@ def render_campaign_cards(campaigns_df: pd.DataFrame, selected_id: str):
             if st.button(label, key=f"camp_select_{row['campaign_id']}", use_container_width=True):
                 st.session_state.selected_campaign = row["campaign_id"]
                 st.rerun()
-    st.markdown("</div>", unsafe_allow_html=True)
+    _md("</div>")
 
 
 # ============= exceptions =============
@@ -1564,7 +1577,7 @@ def _suggested_step(focus: dict, sys_row) -> str:
 
 def render_focus_card(focus: dict | None, plan: pd.DataFrame, system: pd.DataFrame, queue_remaining: int):
     if focus is None:
-        st.markdown("""
+        _md("""
         <article class="focus">
           <div class="focus-bar ok"><span>● All clear</span><span class="sep">·</span><span>No critical exceptions on this campaign</span></div>
           <div class="focus-body" style="padding-bottom:22px">
@@ -1574,7 +1587,7 @@ def render_focus_card(focus: dict | None, plan: pd.DataFrame, system: pd.DataFra
             </div>
           </div>
         </article>
-        """, unsafe_allow_html=True)
+        """)
         return
 
     plan_match = plan[(plan["campaign_id"] == focus["campaign_id"]) & (plan["item_id"] == focus["item_id"])]
@@ -1683,7 +1696,7 @@ def render_focus_card(focus: dict | None, plan: pd.DataFrame, system: pd.DataFra
       </div>
     </article>
     """
-    st.markdown(html, unsafe_allow_html=True)
+    _md(html)
 
 
 def render_queue_cards(queue: list[dict]):
@@ -1718,7 +1731,7 @@ def render_queue_cards(queue: list[dict]):
         </article>
         """)
     head = '<div class="queue-head"><span>Up next</span><span>Ordered by urgency</span></div>'
-    st.markdown(f'<div class="queue">{head}{"".join(items_html)}</div>', unsafe_allow_html=True)
+    _md(f'<div class="queue">{head}{"".join(items_html)}</div>')
 
 
 def _resolve_date(date_window: str):
@@ -1759,7 +1772,7 @@ def render_exception_rail(exceptions: list[dict], focus_item: str | None):
       <div class="exc-rail">{''.join(minis)}</div>
     </div>
     """
-    st.markdown(html, unsafe_allow_html=True)
+    _md(html)
 
 
 def render_exceptions_section(
@@ -1810,7 +1823,7 @@ def render_exceptions_section(
         <span class="chip">Inferred <span class="ct">{origins['Inferred/unplanned activity']}</span></span>
       </div>
     """
-    st.markdown(section_head + chips_html, unsafe_allow_html=True)
+    _md(section_head + chips_html)
 
     # functional filter controls below the visual chips
     fc1, fc2 = st.columns([1, 1])
@@ -1838,26 +1851,26 @@ def render_exceptions_section(
         st.rerun()
 
     if not filtered:
-        st.markdown('<div class="queue-more">No exceptions match the current filters.</div>', unsafe_allow_html=True)
-        st.markdown('</section>', unsafe_allow_html=True)
+        _md('<div class="queue-more">No exceptions match the current filters.</div>')
+        _md('</section>')
         return
 
     focus = _pick_focus_exception(filtered)
     queue = [e for e in filtered if e is not focus][:4]
     queue_remaining = max(len(filtered) - 1 - len(queue), 0)
 
-    st.markdown('<div class="exc-grid">', unsafe_allow_html=True)
+    _md('<div class="exc-grid">')
     col_focus, col_queue = st.columns([3, 2], gap="small")
     with col_focus:
         render_focus_card(focus, plan, system, queue_remaining + len(queue))
     with col_queue:
         render_queue_cards(queue)
         if queue_remaining > 0:
-            st.markdown(f'<div class="queue-more">+ <b>{queue_remaining}</b> more in the queue</div>', unsafe_allow_html=True)
-    st.markdown('</div>', unsafe_allow_html=True)
+            _md(f'<div class="queue-more">+ <b>{queue_remaining}</b> more in the queue</div>')
+    _md('</div>')
 
     render_exception_rail(filtered, focus["item_id"] if focus else None)
-    st.markdown('</section>', unsafe_allow_html=True)
+    _md('</section>')
 
 
 # ============= timeline =============
@@ -1991,7 +2004,7 @@ def render_timeline(plan: pd.DataFrame, system: pd.DataFrame, exceptions: list[d
       </div>
     </section>
     """
-    st.markdown(html, unsafe_allow_html=True)
+    _md(html)
 
 
 # ============= handoff =============
@@ -2071,7 +2084,7 @@ def render_handoff(exceptions: list[dict], focused_campaign_id: str):
       <div class="handoff">{''.join(cards)}</div>
     </section>
     """
-    st.markdown(html, unsafe_allow_html=True)
+    _md(html)
 
 
 # ============= footer =============
@@ -2085,13 +2098,13 @@ def render_footer(plan: pd.DataFrame):
       <div>{ANCHOR.strftime('%a %d %b %Y')}</div>
     </footer>
     """
-    st.markdown(html, unsafe_allow_html=True)
+    _md(html)
 
 
 # ============= main =============
 def main():
     st.set_page_config(page_title="Campaign Readiness Monitor", layout="wide", initial_sidebar_state="collapsed")
-    st.markdown(load_design_css(), unsafe_allow_html=True)
+    _md(load_design_css())
 
     plan = generate_campaign_plan()
     system = generate_system_truth()
