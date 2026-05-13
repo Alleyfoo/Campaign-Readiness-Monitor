@@ -908,14 +908,29 @@ code, .mono {
 }
 .exc-rail-head .lbl { font-family: var(--mono); font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-4); }
 .exc-rail-head .lbl b { color: var(--ink); }
+.exc-rail-wrap { width: 100%; min-width: 0; max-width: 100%; }
 .exc-rail {
-  display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: minmax(220px, 1fr);
+  display: flex;
   gap: 10px;
   overflow-x: auto;
-  padding-bottom: 6px;
+  overflow-y: hidden;
+  padding: 2px 2px 10px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-3) transparent;
+  width: 100%;
+  min-width: 0;
 }
+.exc-rail > .mini {
+  flex: 0 0 220px;
+  min-width: 220px;
+}
+.exc-rail::-webkit-scrollbar { height: 10px; }
+.exc-rail::-webkit-scrollbar-thumb {
+  background: var(--line-2);
+  border-radius: 5px;
+}
+.exc-rail::-webkit-scrollbar-thumb:hover { background: var(--line-3); }
+.exc-rail::-webkit-scrollbar-track { background: transparent; }
 .mini {
   background: var(--surface);
   border: 1px solid var(--line);
