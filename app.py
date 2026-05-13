@@ -2115,7 +2115,13 @@ def main():
     campaigns_df = build_campaign_summary(plan, all_issues)
 
     if "selected_campaign" not in st.session_state:
-        st.session_state.selected_campaign = campaigns_df.sort_values("planned_start").iloc[0]["campaign_id"]
+        ranked = campaigns_df.copy()
+        ranked["_days_to_start"] = (pd.to_datetime(ranked["planned_start"]) - pd.Timestamp(ANCHOR)).dt.days
+        ranked = ranked.sort_values(
+            by=["critical_count", "_days_to_start"],
+            ascending=[False, True],
+        )
+        st.session_state.selected_campaign = ranked.iloc[0]["campaign_id"]
     if "view_mode" not in st.session_state:
         st.session_state.view_mode = "Business"
     if "severity_filter_state" not in st.session_state:
