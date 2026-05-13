@@ -5,14 +5,16 @@
   "fields": [
     {
       "name": "campaign_id",
-      "label": "Campaign ID",
+      "recommended_header": "campaign_code",
+      "label": "Campaign code / ID",
       "type": "string",
       "required": true,
       "nullable": false,
-      "aliases": ["campaign", "campaign id", "campaign_id"]
+      "aliases": ["campaign", "campaign id", "campaign_id", "campaign code", "campaign_code", "promo code", "promo_code", "promotion code", "promotion_code"]
     },
     {
       "name": "campaign_name",
+      "recommended_header": "campaign_name",
       "label": "Campaign name",
       "type": "string",
       "required": true,
@@ -21,6 +23,7 @@
     },
     {
       "name": "campaign_source",
+      "recommended_header": "campaign_source",
       "label": "Campaign source",
       "type": "string",
       "required": false,
@@ -30,22 +33,25 @@
     },
     {
       "name": "planned_start",
-      "label": "Planned start",
+      "recommended_header": "start_date",
+      "label": "Campaign start date",
       "type": "date",
       "required": true,
       "nullable": false,
-      "aliases": ["start", "start date", "planned start", "planned_start"]
+      "aliases": ["start", "start date", "start_date", "campaign start date", "planned start", "planned_start"]
     },
     {
       "name": "planned_end",
-      "label": "Planned end",
+      "recommended_header": "end_date",
+      "label": "Campaign end date",
       "type": "date",
       "required": true,
       "nullable": false,
-      "aliases": ["end", "end date", "planned end", "planned_end"]
+      "aliases": ["end", "end date", "end_date", "campaign end date", "planned end", "planned_end"]
     },
     {
       "name": "channel",
+      "recommended_header": "channel",
       "label": "Channel",
       "type": "channel",
       "required": true,
@@ -55,22 +61,25 @@
     },
     {
       "name": "item_id",
-      "label": "Item ID",
+      "recommended_header": "product_sku",
+      "label": "Product SKU",
       "type": "string",
       "required": true,
       "nullable": true,
-      "aliases": ["sku", "item", "item id", "item_id", "product"]
+      "aliases": ["sku", "product sku", "product_sku", "item", "item id", "item_id", "product"]
     },
     {
       "name": "planned_price",
-      "label": "Planned price",
+      "recommended_header": "product_price",
+      "label": "Product price",
       "type": "number",
       "required": true,
       "nullable": true,
-      "aliases": ["planned price", "price", "planned_price"]
+      "aliases": ["product price", "product_price", "planned price", "price", "planned_price"]
     },
     {
       "name": "planned_category",
+      "recommended_header": "planned_category",
       "label": "Planned category",
       "type": "string",
       "required": false,
@@ -80,6 +89,7 @@
     },
     {
       "name": "planned_visibility",
+      "recommended_header": "planned_visibility",
       "label": "Planned visibility",
       "type": "boolean",
       "required": false,
@@ -89,6 +99,7 @@
     },
     {
       "name": "planned_owner",
+      "recommended_header": "planned_owner",
       "label": "Planned owner",
       "type": "string",
       "required": false,

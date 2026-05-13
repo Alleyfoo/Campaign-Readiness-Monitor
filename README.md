@@ -25,15 +25,17 @@ When no file is uploaded, the app uses the synthetic campaign plan. A basic uplo
 
 Uploaded plans are fitted against the campaign plan schema before comparison. The Python schema lives in `campaign_schema.py`, and a machine-readable copy lives in `schemas/campaign_plan_schema.json`. The app also exposes downloadable schema and blank template CSV files in the upload panel.
 
-Minimum upload columns:
+Recommended upload columns:
 
-- `campaign_id`
+- `campaign_code`
 - `campaign_name`
-- `planned_start`
-- `planned_end`
+- `start_date`
+- `end_date`
 - `channel`
-- `item_id`
-- `planned_price`
+- `product_sku`
+- `product_price`
+
+The schema also accepts aliases such as `campaign_id`, `planned_start`, `planned_end`, `item_id`, `sku`, `planned_price` and `price`.
 
 Optional upload columns:
 

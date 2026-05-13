@@ -274,10 +274,11 @@ def build_excel_system_check(
             {
                 "status": severity,
                 "match": system_match,
+                "campaign_code": plan_row["campaign_id"],
                 "campaign": plan_row["campaign_name"],
-                "item_id": item_id,
+                "product_sku": item_id,
                 "channel": channel,
-                "excel_price": plan_row["planned_price"],
+                "excel_product_price": plan_row["planned_price"],
                 "system_price": None if sys_row is None else sys_row["system_price"],
                 "excel_window": f"{pd.Timestamp(plan_row['planned_start']).date()} - {pd.Timestamp(plan_row['planned_end']).date()}",
                 "system_window": "N/A" if sys_row is None or pd.isna(sys_row["price_start"]) else f"{pd.Timestamp(sys_row['price_start']).date()} - {pd.Timestamp(sys_row['price_end']).date()}",
@@ -300,10 +301,11 @@ def build_excel_system_check(
                 {
                     "status": "Warning",
                     "match": "System only",
+                    "campaign_code": "N/A",
                     "campaign": "Not in Excel plan",
-                    "item_id": item_id,
+                    "product_sku": item_id,
                     "channel": sys_row["system_channel"],
-                    "excel_price": None,
+                    "excel_product_price": None,
                     "system_price": sys_row["system_price"],
                     "excel_window": "N/A",
                     "system_window": f"{pd.Timestamp(sys_row['price_start']).date()} - {pd.Timestamp(sys_row['price_end']).date()}",
@@ -320,7 +322,7 @@ def build_excel_system_check(
         return check
     status_order = {"Critical": 0, "Warning": 1, "OK": 2}
     check["_status_order"] = check["status"].map(status_order).fillna(9)
-    check = check.sort_values(["_status_order", "campaign", "item_id"]).drop(columns=["_status_order"])
+    check = check.sort_values(["_status_order", "campaign", "product_sku"]).drop(columns=["_status_order"])
     return check
 
 
@@ -357,10 +359,11 @@ def render_excel_system_check(
         column_config={
             "status": st.column_config.TextColumn("Status", width="small"),
             "match": st.column_config.TextColumn("Match", width="small"),
+            "campaign_code": st.column_config.TextColumn("Campaign code", width="small"),
             "campaign": st.column_config.TextColumn("Campaign", width="medium"),
-            "item_id": st.column_config.TextColumn("SKU", width="small"),
+            "product_sku": st.column_config.TextColumn("Product SKU", width="small"),
             "channel": st.column_config.TextColumn("Channel", width="small"),
-            "excel_price": st.column_config.NumberColumn("Excel price", format="%.2f"),
+            "excel_product_price": st.column_config.NumberColumn("Excel product price", format="%.2f"),
             "system_price": st.column_config.NumberColumn("System price", format="%.2f"),
             "issues": st.column_config.TextColumn("Issues", width="large"),
         },

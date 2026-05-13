@@ -14,6 +14,7 @@ class SchemaField:
     required: bool
     nullable: bool = True
     default: Any = None
+    recommended_header: str | None = None
     aliases: tuple[str, ...] = field(default_factory=tuple)
     description: str = ""
 
@@ -21,12 +22,23 @@ class SchemaField:
 CAMPAIGN_PLAN_SCHEMA: tuple[SchemaField, ...] = (
     SchemaField(
         "campaign_id",
-        "Campaign ID",
+        "Campaign code / ID",
         "string",
         True,
         nullable=False,
-        aliases=("campaign", "campaign id", "campaign_id"),
-        description="Stable identifier for the campaign.",
+        recommended_header="campaign_code",
+        aliases=(
+            "campaign",
+            "campaign id",
+            "campaign_id",
+            "campaign code",
+            "campaign_code",
+            "promo code",
+            "promo_code",
+            "promotion code",
+            "promotion_code",
+        ),
+        description="Campaign, promo or pricing code used to identify the campaign.",
     ),
     SchemaField(
         "campaign_name",
@@ -34,6 +46,7 @@ CAMPAIGN_PLAN_SCHEMA: tuple[SchemaField, ...] = (
         "string",
         True,
         nullable=False,
+        recommended_header="campaign_name",
         aliases=("campaign name", "campaign_name"),
         description="Human-readable campaign name.",
     ),
@@ -43,25 +56,28 @@ CAMPAIGN_PLAN_SCHEMA: tuple[SchemaField, ...] = (
         "string",
         False,
         default="Uploaded file",
+        recommended_header="campaign_source",
         aliases=("source", "campaign source", "campaign_source"),
         description="Where the plan came from.",
     ),
     SchemaField(
         "planned_start",
-        "Planned start",
+        "Campaign start date",
         "date",
         True,
         nullable=False,
-        aliases=("start", "start date", "planned start", "planned_start"),
+        recommended_header="start_date",
+        aliases=("start", "start date", "start_date", "campaign start date", "planned start", "planned_start"),
         description="Campaign launch date.",
     ),
     SchemaField(
         "planned_end",
-        "Planned end",
+        "Campaign end date",
         "date",
         True,
         nullable=False,
-        aliases=("end", "end date", "planned end", "planned_end"),
+        recommended_header="end_date",
+        aliases=("end", "end date", "end_date", "campaign end date", "planned end", "planned_end"),
         description="Campaign end date.",
     ),
     SchemaField(
@@ -70,26 +86,29 @@ CAMPAIGN_PLAN_SCHEMA: tuple[SchemaField, ...] = (
         "channel",
         True,
         nullable=False,
+        recommended_header="channel",
         aliases=("channel",),
         description="Target selling channel.",
     ),
     SchemaField(
         "item_id",
-        "Item ID",
+        "Product SKU",
         "string",
         True,
         nullable=True,
-        aliases=("sku", "item", "item id", "item_id", "product"),
-        description="SKU or item identifier planned for the campaign.",
+        recommended_header="product_sku",
+        aliases=("sku", "product sku", "product_sku", "item", "item id", "item_id", "product"),
+        description="Product SKU planned for the campaign.",
     ),
     SchemaField(
         "planned_price",
-        "Planned price",
+        "Product price",
         "number",
         True,
         nullable=True,
-        aliases=("planned price", "price", "planned_price"),
-        description="Campaign price from the plan.",
+        recommended_header="product_price",
+        aliases=("product price", "product_price", "planned price", "price", "planned_price"),
+        description="Campaign product price from the Excel plan.",
     ),
     SchemaField(
         "planned_category",
@@ -97,6 +116,7 @@ CAMPAIGN_PLAN_SCHEMA: tuple[SchemaField, ...] = (
         "string",
         False,
         default="",
+        recommended_header="planned_category",
         aliases=("category", "planned category", "planned_category"),
         description="Campaign category or placement.",
     ),
@@ -106,6 +126,7 @@ CAMPAIGN_PLAN_SCHEMA: tuple[SchemaField, ...] = (
         "boolean",
         False,
         default=True,
+        recommended_header="planned_visibility",
         aliases=("visibility", "planned visibility", "planned_visibility"),
         description="Whether the item should be visible in the target channel.",
     ),
@@ -115,6 +136,7 @@ CAMPAIGN_PLAN_SCHEMA: tuple[SchemaField, ...] = (
         "string",
         False,
         default="",
+        recommended_header="planned_owner",
         aliases=("owner", "planned owner", "planned_owner"),
         description="Person or team accountable for the campaign line.",
     ),
@@ -177,6 +199,7 @@ def schema_as_dataframe() -> pd.DataFrame:
         [
             {
                 "column": field.name,
+                "recommended_header": field.recommended_header or field.name,
                 "label": field.label,
                 "type": field.dtype,
                 "required": field.required,
@@ -191,7 +214,7 @@ def schema_as_dataframe() -> pd.DataFrame:
 
 def campaign_plan_template() -> pd.DataFrame:
     return pd.DataFrame(
-        columns=[field.name for field in CAMPAIGN_PLAN_SCHEMA]
+        columns=[field.recommended_header or field.name for field in CAMPAIGN_PLAN_SCHEMA]
     )
 
 
